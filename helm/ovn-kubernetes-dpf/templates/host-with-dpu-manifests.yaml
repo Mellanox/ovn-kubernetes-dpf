@@ -256,6 +256,8 @@ spec:
           value: ""
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
           value: "false"
+        - name: OVN_ENABLE_INTERCONNECT
+          value: "true"
         - name: OVNKUBE_NODE_MODE
           value: "dpu-host"
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV

@@ -714,11 +714,13 @@ spec:
         - name: OVNKUBE_NODE_LEASE_NAMESPACE
           value: {{ default .Release.Namespace .Values.leaseNamespace }}
         readinessProbe:
-          exec:
-            command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnkube-node"]
+          httpGet:
+            path: /metrics
+            port: 9476
+            scheme: HTTP
           initialDelaySeconds: 30
-          timeoutSeconds: 30
-          periodSeconds: 60
+          timeoutSeconds: 5
+          periodSeconds: 30
       - name: ovn-controller
         image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
         imagePullPolicy: {{ .Values.dpuManifests.image.pullPolicy }}

@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
 	url = https://github.com/aserdean/ovn-kubernetes
-	branch = ovn_ic_dpu_6_16
+	branch = rebase_ovn_ic_v4
