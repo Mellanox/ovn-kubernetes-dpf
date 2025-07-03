@@ -320,7 +320,7 @@ spec:
         - mountPath: /tmp/ips
           name: ips
         {{- end }}
-        - mountPath: /etc/init-output
+        - mountPath: /etc/openvswitch
           name: init-output
         - name: incluster
           mountPath: "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -507,8 +507,6 @@ spec:
           privileged: true
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
-        - mountPath: /etc/init-output
-          name: init-output
         - mountPath: /host
           name: host-slash
           readOnly: true
@@ -542,7 +540,9 @@ spec:
           readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
-          readOnly: true
+        - mountPath: /etc/openvswitch/ovn_k8s.conf
+          name: init-output
+          subPath: ovn_k8s.conf
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
