@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
 	url = https://github.com/aserdean/ovn-kubernetes
-	branch = switch_dpu_annotation
+	branch = test_rebase
