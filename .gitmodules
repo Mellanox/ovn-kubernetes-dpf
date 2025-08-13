@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
-	url = https://github.com/aserdean/ovn-kubernetes
-	branch = refactor-gateway-init-readability
+	url = https://github.com/ovn-kubernetes/ovn-kubernetes
+	branch = release-1.1
