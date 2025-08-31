@@ -28,6 +28,9 @@ nodeWithDPUManifests:
 # -- Variables related to manifests that are deployed for nodes without DPU
 nodeWithoutDPUManifests:
   enabled: false
+  imagedpf:
+    repository: ${OVNKUBERNETES_IMAGE}
+    tag: ${TAG}
   image:
     repository: ${OVNKUBERNETES_IMAGE}
     tag: ${TAG}

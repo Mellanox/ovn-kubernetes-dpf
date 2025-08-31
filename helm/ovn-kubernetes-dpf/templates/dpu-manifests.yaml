@@ -178,7 +178,7 @@ spec:
       initContainers:
       {{- if not .Values.dpuManifests.externalDHCP }}
       - name: ipallocator
-        image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
+        image: {{ .Values.dpuManifests.imagedpf.repository }}:{{ .Values.dpuManifests.imagedpf.tag }}
         imagePullPolicy: {{ .Values.dpuManifests.image.pullPolicy }}
         command:
         - /ipallocator
@@ -242,7 +242,7 @@ spec:
           name: cni-cache
       {{- end }}
       - name: cniprovisioner
-        image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
+        image: {{ .Values.dpuManifests.imagedpf.repository }}:{{ .Values.dpuManifests.imagedpf.tag }}
         imagePullPolicy: {{ .Values.dpuManifests.image.pullPolicy }}
         command: ["/cniprovisioner"]
         args:
@@ -359,7 +359,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.0.0"
+          value: "1.1.0"
         - name: OVN_LOGLEVEL_NB
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -416,7 +416,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.0.0"
+          value: "1.1.0"
         - name: OVN_LOGLEVEL_SB
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -474,7 +474,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.0.0"
+          value: "1.1.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -557,7 +557,7 @@ spec:
         - name: OVN_EGRESSSERVICE_ENABLE
           value: ""
         - name: OVN_DAEMONSET_VERSION
-          value: "1.0.0"
+          value: "1.1.0"
         - name: OVNKUBE_LOGLEVEL
           value: "4"
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -703,6 +703,8 @@ spec:
           value: "false"
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
           value: "false"
+        - name: OVN_DISABLE_REQUESTEDCHASSIS
+          value: "true"
         - name: OVN_ENABLE_SVC_TEMPLATE_SUPPORT
           value: "false"
         - name: OVN_ENABLE_DNSNAMERESOLVER
@@ -751,7 +753,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.0.0"
+          value: "1.1.0"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: "-vconsole:info"
         - name: K8S_APISERVER
@@ -798,7 +800,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.0.0"
+          value: "1.1.0"
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
