@@ -32,12 +32,17 @@ GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 help: ## Display this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
+##@ Docker Build Targets
+
+REGISTRY ?= ghcr.io/mellanox
+OVNKUBERNETES_IMAGE ?= $(REGISTRY)/ovn-kubernetes
+
 .PHONY: docker-build-ubuntu
 docker-build-ubuntu:
 	docker buildx build \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
-		-t ovn-kube-ubuntu:${TAG} \
+		-t ${OVNKUBERNETES_IMAGE}:${TAG} \
 		--load \
 		-f Dockerfile.ovn-kubernetes.ubuntu .
 
@@ -46,6 +51,66 @@ docker-build-fedora:
 	docker buildx build \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
-		-t ovn-kube-fedora:${TAG}  \
+		-t ${OVNKUBERNETES_IMAGE}:${TAG} \
 		--load \
 		-f Dockerfile.ovn-kubernetes.fedora .
+
+##@ Helm Chart Targets
+
+# Helm chart variables
+HELM_CHART_DIR ?= helm/ovn-kubernetes-dpf
+HELM_OUTPUT_DIR ?= _output/helm
+
+.PHONY: helm-build
+helm-build: yq
+	@mkdir -p $(HELM_OUTPUT_DIR)
+	@cp $(HELM_CHART_DIR)/values.yaml.tmpl $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.nodeWithDPUManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.nodeWithDPUManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.nodeWithoutDPUManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.nodeWithoutDPUManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.dpuManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.dpuManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.dpuManifests.imagedpf.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.dpuManifests.imagedpf.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.controlPlaneManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.controlPlaneManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.version = "$(TAG)"' $(HELM_CHART_DIR)/Chart.yaml
+	@$(YQ) eval -i '.appVersion = "$(TAG)"' $(HELM_CHART_DIR)/Chart.yaml
+	@helm package $(HELM_CHART_DIR) -d $(HELM_OUTPUT_DIR)
+	@git checkout $(HELM_CHART_DIR)/values.yaml $(HELM_CHART_DIR)/Chart.yaml 2>/dev/null || true
+
+.PHONY: helm-publish
+helm-publish: helm-build ## Publish the Helm chart to OCI registry
+	@helm push $(HELM_OUTPUT_DIR)/ovn-kubernetes-chart-$(TAG).tgz oci://$(IMAGE_REGISTRY)/$(IMAGE_REPOSITORY)/charts
+
+.PHONY: helm-clean
+helm-clean:
+	@rm -rf $(HELM_OUTPUT_DIR)
+	@echo "Cleaned Helm build artifacts"
+
+##@ Tool Dependencies
+
+TOOLSDIR ?= $(CURDIR)/hack/tools/bin
+YQ_VERSION ?= v4.45.1
+export YQ ?= $(TOOLSDIR)/yq-$(YQ_VERSION)
+
+define go-install-tool
+@[ -f $(1) ] || { \
+set -e; \
+package=$(2)@$(3) ;\
+echo "Downloading $${package}" ;\
+GOBIN=$(TOOLSDIR) go install $${package} ;\
+mv "$$(echo "$(1)" | sed "s/-$(3)$$//")" $(1) ;\
+}
+endef
+
+$(TOOLSDIR):
+	@mkdir -p $@
+
+.PHONY: yq
+yq: $(YQ) ## Download yq locally if necessary
+$(YQ): | $(TOOLSDIR)
+	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
