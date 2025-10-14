@@ -1,0 +1,5 @@
+# OVN-Kubernetes DPUService
+
+This repository contains the development OVN Kubernetes DPUService for the NVIDIA DOCA Platform. This DPUService runs on a DPU allowing OVN-Kubernetes to offload its work from the host.
+
+For more information on how to install and consume OVN Kubernetes as part of DPF see the [DOCA Platform documentation].(https://docs.nvidia.com/networking/display/dpf2507).
