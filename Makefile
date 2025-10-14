@@ -34,7 +34,7 @@ help: ## Display this help.
 
 ##@ Docker Build Targets
 
-REGISTRY ?= ghcr.io/mellanox
+REGISTRY ?= example.com
 OVNKUBERNETES_IMAGE ?= $(REGISTRY)/ovn-kubernetes
 
 .PHONY: docker-build-ubuntu
@@ -42,7 +42,7 @@ docker-build-ubuntu:
 	docker buildx build \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
-		-t ${OVNKUBERNETES_IMAGE}:${TAG} \
+		-t $(OVNKUBERNETES_IMAGE):$(TAG) \
 		--load \
 		-f Dockerfile.ovn-kubernetes.ubuntu .
 
@@ -51,13 +51,20 @@ docker-build-fedora:
 	docker buildx build \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
-		-t ${OVNKUBERNETES_IMAGE}:${TAG} \
+		-t $(OVNKUBERNETES_IMAGE):$(TAG)-fedora \
 		--load \
 		-f Dockerfile.ovn-kubernetes.fedora .
 
+.PHONY: docker-push-ubuntu
+docker-push-ubuntu: ## Push Ubuntu image to registry
+	docker push $(OVNKUBERNETES_IMAGE):$(TAG)
+
+.PHONY: docker-push-fedora
+docker-push-fedora: ## Push Fedora image to registry
+	docker push $(OVNKUBERNETES_IMAGE):$(TAG)-fedora
+
 ##@ Helm Chart Targets
 
-# Helm chart variables
 HELM_CHART_DIR ?= helm/ovn-kubernetes-dpf
 HELM_OUTPUT_DIR ?= _output/helm
 
