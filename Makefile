@@ -91,7 +91,7 @@ helm-build: yq
 
 .PHONY: helm-publish
 helm-publish: helm-build ## Publish the Helm chart to OCI registry
-	@helm push $(HELM_OUTPUT_DIR)/ovn-kubernetes-chart-$(TAG).tgz oci://$(IMAGE_REGISTRY)/$(IMAGE_REPOSITORY)/charts
+	@helm push $(HELM_OUTPUT_DIR)/ovn-kubernetes-chart-$(TAG).tgz oci://$(REGISTRY)/charts
 
 .PHONY: helm-clean
 helm-clean:
