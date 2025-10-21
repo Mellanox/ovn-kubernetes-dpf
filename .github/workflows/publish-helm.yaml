@@ -6,6 +6,9 @@ on:
       - main
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -35,10 +38,6 @@ jobs:
         with:
           version: 'latest'
       
-      - name: Log in to Container Registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
-      
       - name: Determine tag
         id: tag
         run: |
@@ -49,7 +48,18 @@ jobs:
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
       
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+      
+      - name: Build Helm chart
+        if: github.event_name == 'pull_request'
+        run: |
+          make helm-build TAG=${{ steps.tag.outputs.tag }} REGISTRY=ghcr.io/mellanox
+      
       - name: Build and publish Helm chart
+        if: github.event_name != 'pull_request'
         run: |
           make helm-publish TAG=${{ steps.tag.outputs.tag }} REGISTRY=ghcr.io/mellanox
 

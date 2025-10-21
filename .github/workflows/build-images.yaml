@@ -13,8 +13,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME_UBUNTU: ${{ github.repository }}
-  IMAGE_NAME_FEDORA: ${{ github.repository }}-fedora
+  IMAGE_NAME_UBUNTU: ghcr.io/mellanox/ovn-kubernetes-dpf
+  IMAGE_NAME_FEDORA: ghcr.io/mellanox/ovn-kubernetes-dpf-fedora
 
 jobs:
   build-ubuntu:
@@ -58,7 +58,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UBUNTU }}
+          images: ${{ env.IMAGE_NAME_UBUNTU }}
       
       - name: Build and push Ubuntu image
         uses: docker/build-push-action@v5
@@ -67,13 +67,14 @@ jobs:
           file: ./Dockerfile.ovn-kubernetes.ubuntu
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UBUNTU }}:${{ steps.tag.outputs.tag }}
+          tags: ${{ env.IMAGE_NAME_UBUNTU }}:${{ steps.tag.outputs.tag }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             OVN_KUBERNETES_DIR=ovn-kubernetes
             BUILDER_IMAGE=quay.io/projectquay/golang:1.24
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
 
   build-fedora:
     runs-on: ubuntu-latest
@@ -116,7 +117,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FEDORA }}
+          images: ${{ env.IMAGE_NAME_FEDORA }}
       
       - name: Build and push Fedora image
         uses: docker/build-push-action@v5
@@ -125,11 +126,12 @@ jobs:
           file: ./Dockerfile.ovn-kubernetes.fedora
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FEDORA }}:${{ steps.tag.outputs.tag }}
+          tags: ${{ env.IMAGE_NAME_FEDORA }}:${{ steps.tag.outputs.tag }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             OVN_KUBERNETES_DIR=ovn-kubernetes
             BUILDER_IMAGE=quay.io/projectquay/golang:1.24
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
 
