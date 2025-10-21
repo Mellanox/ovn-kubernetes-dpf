@@ -45,7 +45,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG=${GITHUB_REF#refs/tags/}
           else
-            TAG=${GITHUB_SHA::7}
+            TAG=v25.7.1-${GITHUB_SHA::7}
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
       
