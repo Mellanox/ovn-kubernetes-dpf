@@ -42,6 +42,9 @@ dpuManifests:
     repository: ${OVNKUBERNETES_IMAGE}
     tag: ${TAG}
     pullPolicy: IfNotPresent
+  imagedpf:
+    repository: ${OVNKUBERNETES_IMAGE}
+    tag: ${TAG}
   kubernetesSecretName: null # user needs to populate based on DPUServiceCredentialRequest
   vtepCIDR: null # user needs to populate based on DPUServiceIPAM
   hostCIDR: null # user needs to populate based on the host cluster setup
