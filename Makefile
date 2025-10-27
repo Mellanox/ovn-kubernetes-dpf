@@ -83,7 +83,7 @@ DPF_UTILS_DIR = dpf-utils
 
 .PHONY: lint
 lint: golangci-lint ## Run linter for DPF utilities
-	cd $(DPF_UTILS_DIR) && $(GOLANGCI_LINT) run ./...
+	cd $(DPF_UTILS_DIR) && $(GOLANGCI_LINT) run --timeout=5m ./...
 
 .PHONY: test
 test: ## Run tests for DPF utilities
