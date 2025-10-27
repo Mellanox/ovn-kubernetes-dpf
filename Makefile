@@ -35,7 +35,7 @@ help: ## Display this help.
 ##@ Docker Build Targets
 
 REGISTRY ?= example.com
-OVNKUBERNETES_IMAGE ?= $(REGISTRY)/ovn-kubernetes
+OVNKUBERNETES_IMAGE ?= $(REGISTRY)/ovn-kubernetes-dpf
 
 .PHONY: docker-build-ubuntu
 docker-build-ubuntu:
