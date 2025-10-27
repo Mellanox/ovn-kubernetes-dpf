@@ -648,34 +648,4 @@ spec:
           path: /var/lib/openvswitch
       tolerations:
       - operator: "Exists"
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  labels:
-    app.kubernetes.io/component: ovnkube-node
-  name: {{ include "ovn-kubernetes.fullname" . }}-node-prometheus
-  namespace: {{ .Release.Namespace }}
-spec:
-  endpoints:
-  - interval: 30s
-    port: ovnkube-node-metrics
-    path: /metrics
-    scheme: http
-  - interval: 30s
-    port: ovs-metrics
-    path: /metrics
-    scheme: http
-  - interval: 30s
-    port: ovn-metrics
-    path: /metrics
-    scheme: http
-  jobLabel: k8s-app
-  namespaceSelector:
-    matchNames:
-    - {{ .Release.Namespace }}
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: ovnkube-node
-      {{- include "ovn-kubernetes.selectorLabels" . | nindent 6 }}
 {{- end }}
