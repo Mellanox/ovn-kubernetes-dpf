@@ -16,13 +16,13 @@ COPY go.sum go.sum
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-# RUN --mount=type=cache,target=/root/.cache/go-build \
-#     --mount=type=cache,target=/go/pkg/mod \
-#     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-#     go build -trimpath \
-#     -ldflags="${ldflags}"  \
-#     -gcflags="${gcflags}" \
-#     -o ipallocator ./cmd/ipallocator
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath \
+    -ldflags="${ldflags}"  \
+    -gcflags="${gcflags}" \
+    -o ipallocator ./cmd/ipallocator
 
 # RUN --mount=type=cache,target=/root/.cache/go-build \
 #     --mount=type=cache,target=/go/pkg/mod \
@@ -78,7 +78,7 @@ RUN dpkg -l | awk '/^ii/{print $2"="$3}' | sort > /after-ovn-dpkg-list.txt
 RUN mkdir -p /var/run/openvswitch
 
 RUN mkdir -p /usr/libexec/cni/
-# COPY --from=builder /workspace/ipallocator /ipallocator
+COPY --from=builder /workspace/ipallocator /ipallocator
 # COPY --from=builder /workspace/dpucniprovisioner /cniprovisioner
 COPY --from=builder /workspace/ovnkubernetesresourceinjector /ovnkubernetesresourceinjector
 
