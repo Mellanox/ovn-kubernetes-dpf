@@ -36,6 +36,7 @@ help: ## Display this help.
 
 REGISTRY ?= example.com
 OVNKUBERNETES_IMAGE ?= $(REGISTRY)/ovn-kubernetes-dpf
+DPF_UTILS_IMAGE ?= $(REGISTRY)/ovn-kubernetes-dpf-utils
 
 .PHONY: docker-build-ubuntu
 docker-build-ubuntu:
@@ -55,6 +56,15 @@ docker-build-fedora:
 		--load \
 		-f Dockerfile.ovn-kubernetes.fedora .
 
+.PHONY: docker-build-dpf-utils
+docker-build-dpf-utils: ## Build DPF utilities image
+	docker buildx build \
+		--build-arg builder_image=${GO_IMAGE} \
+		-t $(DPF_UTILS_IMAGE):$(TAG) \
+		--load \
+		-f dpf-utils/Dockerfile \
+		dpf-utils/
+
 .PHONY: docker-push-ubuntu
 docker-push-ubuntu: ## Push Ubuntu image to registry
 	docker push $(OVNKUBERNETES_IMAGE):$(TAG)
@@ -62,6 +72,22 @@ docker-push-ubuntu: ## Push Ubuntu image to registry
 .PHONY: docker-push-fedora
 docker-push-fedora: ## Push Fedora image to registry
 	docker push $(OVNKUBERNETES_IMAGE):$(TAG)-fedora
+
+.PHONY: docker-push-dpf-utils
+docker-push-dpf-utils: ## Push DPF utilities image to registry
+	docker push $(DPF_UTILS_IMAGE):$(TAG)
+
+##@ DPF Utils Targets
+
+DPF_UTILS_DIR = dpf-utils
+
+.PHONY: lint
+lint: golangci-lint ## Run linter for DPF utilities
+	cd $(DPF_UTILS_DIR) && $(GOLANGCI_LINT) run --timeout=5m ./...
+
+.PHONY: test
+test: ## Run tests for DPF utilities
+	cd $(DPF_UTILS_DIR) && go test -v -coverprofile=coverage.out -covermode=atomic ./...
 
 ##@ Helm Chart Targets
 
@@ -72,7 +98,7 @@ HELM_OUTPUT_DIR ?= _output/helm
 helm-build: yq
 	@mkdir -p $(HELM_OUTPUT_DIR)
 	@cp $(HELM_CHART_DIR)/values.yaml.tmpl $(HELM_CHART_DIR)/values.yaml
-	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.repository = "$(DPF_UTILS_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.nodeWithDPUManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.nodeWithDPUManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
@@ -80,7 +106,7 @@ helm-build: yq
 	@$(YQ) eval -i '.nodeWithoutDPUManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.dpuManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.dpuManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
-	@$(YQ) eval -i '.dpuManifests.imagedpf.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
+	@$(YQ) eval -i '.dpuManifests.imagedpf.repository = "$(DPF_UTILS_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.dpuManifests.imagedpf.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.controlPlaneManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.controlPlaneManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
@@ -103,6 +129,8 @@ helm-clean:
 TOOLSDIR ?= $(CURDIR)/hack/tools/bin
 YQ_VERSION ?= v4.45.1
 export YQ ?= $(TOOLSDIR)/yq-$(YQ_VERSION)
+GOLANGCI_LINT_VERSION ?= v1.62.2
+export GOLANGCI_LINT ?= $(TOOLSDIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 define go-install-tool
 @[ -f $(1) ] || { \
@@ -121,3 +149,8 @@ $(TOOLSDIR):
 yq: $(YQ) ## Download yq locally if necessary
 $(YQ): | $(TOOLSDIR)
 	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
+
+.PHONY: golangci-lint
+golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary
+$(GOLANGCI_LINT): | $(TOOLSDIR)
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))

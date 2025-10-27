@@ -15,6 +15,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_UBUNTU: ghcr.io/mellanox/ovn-kubernetes-dpf
   IMAGE_NAME_FEDORA: ghcr.io/mellanox/ovn-kubernetes-dpf-fedora
+  IMAGE_NAME_DPF_UTILS: ghcr.io/mellanox/ovn-kubernetes-dpf-utils
 
 jobs:
   build-ubuntu:
@@ -131,6 +132,64 @@ jobs:
           build-args: |
             OVN_KUBERNETES_DIR=ovn-kubernetes
             BUILDER_IMAGE=quay.io/projectquay/golang:1.24
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  build-dpf-utils:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            TAG=v25.7.1-${GITHUB_SHA::7}
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata (labels only)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME_DPF_UTILS }}
+      
+      - name: Build and push DPF Utils image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dpf-utils
+          file: ./dpf-utils/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.IMAGE_NAME_DPF_UTILS }}:${{ steps.tag.outputs.tag }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            builder_image=quay.io/projectquay/golang:1.24
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
