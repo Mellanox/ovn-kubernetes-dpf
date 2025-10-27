@@ -323,26 +323,4 @@ spec:
           type: DirectoryOrCreate
       tolerations:
       - operator: "Exists"
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  labels:
-    app.kubernetes.io/component: ovnkube-cluster-manager
-  name: {{ include "ovn-kubernetes.fullname" . }}-cm-prometheus
-  namespace: {{ .Release.Namespace }}
-spec:
-  endpoints:
-  - interval: 30s
-    port: http-metrics
-    scheme: http
-    path: /metrics
-  jobLabel: k8s-app
-  namespaceSelector:
-    matchNames:
-    - {{ .Release.Namespace }}
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: ovnkube-cluster-manager
-      {{- include "ovn-kubernetes.selectorLabels" . | nindent 6 }}
 {{- end }}
