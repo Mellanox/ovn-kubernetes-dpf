@@ -1,16 +1,15 @@
 nameOverride: ovn-kubernetes
 
-# -- Variables related to the OVN Kubernetes Resource Injector
+# -- OVN Kubernetes Resource Injector
+# Uses MutatingAdmissionPolicy to inject Multus annotations and SR-IOV VF resources into pods.
+# Requires Kubernetes 1.30+ with MutatingAdmissionPolicy feature gate enabled.
 ovn-kubernetes-resource-injector:
   enabled: false
-  resourceName: nvidia.com/bf3-p0-vfs
-  controllerManager:
-    webhook:
-      command:
-      - /ovnkubernetesresourceinjector
-      image:
-        repository: ${OVNKUBERNETES_IMAGE}
-        tag: ${TAG}
+
+# -- The SR-IOV VF resource name to inject into pod containers
+resourceName: nvidia.com/bf3-p0-vfs
+# -- The name of the NetworkAttachmentDefinition
+nadName: dpf-ovn-kubernetes
 
 # -- Variables related to manifests that are deployed for nodes with DPU
 nodeWithDPUManifests:

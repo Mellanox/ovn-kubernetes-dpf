@@ -80,14 +80,42 @@ docker-push-dpf-utils: ## Push DPF utilities image to registry
 ##@ DPF Utils Targets
 
 DPF_UTILS_DIR = dpf-utils
+ENVTEST_K8S_VERSION ?= 1.33.0
+ENVTEST ?= $(TOOLSDIR)/setup-envtest
 
 .PHONY: lint
 lint: golangci-lint ## Run linter for DPF utilities
 	cd $(DPF_UTILS_DIR) && $(GOLANGCI_LINT) run --timeout=5m ./...
 
+.PHONY: generate-test-policy
+generate-test-policy: helm ## Generate admission policy testdata from helm chart
+	@mkdir -p $(DPF_UTILS_DIR)/internal/admissionpolicy/testdata
+	@$(HELM) template test-release $(HELM_CHART_DIR) \
+		--set ovn-kubernetes-resource-injector.enabled=true \
+		--skip-crds \
+		-n test-namespace \
+		-s templates/mutating-admission-policy.yaml \
+		-s templates/mutating-admission-policy-binding.yaml \
+		> $(DPF_UTILS_DIR)/internal/admissionpolicy/testdata/policy.yaml
+
+# Test arguments (use: make test TESTARGS="-run TestAdmissionPolicy")
+# Test package (use: make test TESTPKG="./internal/admissionpolicy/...")
+TESTARGS ?=
+TESTPKG ?= ./...
+
 .PHONY: test
-test: ## Run tests for DPF utilities
-	cd $(DPF_UTILS_DIR) && go test -v -coverprofile=coverage.out -covermode=atomic ./...
+test: envtest ## Run tests for DPF utilities (including envtest)
+	cd $(DPF_UTILS_DIR) && KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(TOOLSDIR) -p path)" \
+		go test -v -coverprofile=coverage.out -covermode=atomic $(TESTPKG) $(TESTARGS)
+
+.PHONY: envtest
+envtest: $(ENVTEST) ## Download setup-envtest and k8s binaries locally if necessary
+	@echo "Ensuring k8s $(ENVTEST_K8S_VERSION) binaries are available..."
+	@$(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(TOOLSDIR) -p path > /dev/null
+
+$(ENVTEST): | $(TOOLSDIR)
+	@echo "Installing setup-envtest..."
+	GOBIN=$(TOOLSDIR) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
 ##@ Helm Chart Targets
 
@@ -98,8 +126,6 @@ HELM_OUTPUT_DIR ?= _output/helm
 helm-build: yq
 	@mkdir -p $(HELM_OUTPUT_DIR)
 	@cp $(HELM_CHART_DIR)/values.yaml.tmpl $(HELM_CHART_DIR)/values.yaml
-	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.repository = "$(DPF_UTILS_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
-	@$(YQ) eval -i '.ovn-kubernetes-resource-injector.controllerManager.webhook.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.nodeWithDPUManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.nodeWithDPUManifests.image.tag = "$(TAG)"' $(HELM_CHART_DIR)/values.yaml
 	@$(YQ) eval -i '.nodeWithoutDPUManifests.image.repository = "$(OVNKUBERNETES_IMAGE)"' $(HELM_CHART_DIR)/values.yaml
@@ -131,6 +157,8 @@ YQ_VERSION ?= v4.45.1
 export YQ ?= $(TOOLSDIR)/yq-$(YQ_VERSION)
 GOLANGCI_LINT_VERSION ?= v1.62.2
 export GOLANGCI_LINT ?= $(TOOLSDIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+HELM_VERSION ?= v3.16.3
+export HELM ?= $(TOOLSDIR)/helm-$(HELM_VERSION)
 
 define go-install-tool
 @[ -f $(1) ] || { \
@@ -154,3 +182,10 @@ $(YQ): | $(TOOLSDIR)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary
 $(GOLANGCI_LINT): | $(TOOLSDIR)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: helm
+helm: $(HELM) ## Download helm locally if necessary
+$(HELM): | $(TOOLSDIR)
+	@echo "Installing helm $(HELM_VERSION)..."
+	@curl -fsSL https://get.helm.sh/helm-$(HELM_VERSION)-$(OS)-$(ARCH).tar.gz | tar xz -C $(TOOLSDIR) --strip-components=1 $(OS)-$(ARCH)/helm
+	@mv $(TOOLSDIR)/helm $(HELM)

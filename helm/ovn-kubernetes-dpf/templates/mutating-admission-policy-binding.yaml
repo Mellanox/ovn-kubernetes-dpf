@@ -1,0 +1,11 @@
+{{- $injector := index .Values "ovn-kubernetes-resource-injector" }}
+{{- if $injector.enabled }}
+apiVersion: admissionregistration.k8s.io/v1alpha1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "ovn-kubernetes.fullname" . }}-resource-injector-binding
+  labels:
+    {{- include "ovn-kubernetes.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "ovn-kubernetes.fullname" . }}-resource-injector
+{{- end }}
