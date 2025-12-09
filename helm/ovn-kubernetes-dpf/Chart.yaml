@@ -9,7 +9,3 @@ icon: https://www.ovn.org/images/ovn-logo.png
 sources:
 - https://github.com/ovn-org/ovn-kubernetes
 - https://github.com/ovn-org/ovn
-dependencies:
-- name: ovn-kubernetes-resource-injector
-  version: 1.1.0
-  condition: ovn-kubernetes-resource-injector.enabled
