@@ -5,7 +5,11 @@ nameOverride: ovn-kubernetes
 # Requires Kubernetes 1.30+ with MutatingAdmissionPolicy feature gate enabled.
 ovn-kubernetes-resource-injector:
   enabled: false
-  resourceName: nvidia.com/bf3-p0-vfs
+
+# -- The SR-IOV VF resource name to inject into pod containers
+resourceName: nvidia.com/bf3-p0-vfs
+# -- The name of the NetworkAttachmentDefinition
+nadName: dpf-ovn-kubernetes
 
 # -- Variables related to manifests that are deployed for nodes with DPU
 nodeWithDPUManifests:
