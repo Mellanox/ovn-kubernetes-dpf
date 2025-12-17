@@ -1,5 +1,4 @@
-{{- $injector := index .Values "ovn-kubernetes-resource-injector" }}
-{{- if $injector.enabled }}
+---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
@@ -18,4 +17,4 @@ spec:
     "logfile-maxbackups": 5,
     "logfile-maxage": 5
     }'
-{{- end }}
+
