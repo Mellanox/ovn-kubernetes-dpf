@@ -254,17 +254,19 @@ spec:
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: ""
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
-          value: ""
+          value: {{ .Values.adminNetworkPolicy.enable | quote }}
         - name: OVN_EGRESSIP_ENABLE
-          value: ""
+          value: {{ .Values.egress.ipEnable | quote }}
         - name: OVN_EGRESSSERVICE_ENABLE
-          value: ""
+          value: {{ .Values.egress.serviceEnable | quote }}
         - name: OVN_EGRESSFIREWALL_ENABLE
-          value: ""
+          value: {{ .Values.egress.firewallEnable | quote }}
         - name: OVN_EGRESSQOS_ENABLE
-          value: ""
+          value: {{ .Values.egress.qosEnable | quote }}
+        - name: OVN_NETWORK_QOS_ENABLE
+          value: {{ .Values.qos.enable | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
-          value: "false"
+          value: {{ .Values.multiNetwork.enable | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -280,11 +282,11 @@ spec:
         - name: OVN_GATEWAY_MODE
           value: shared
         - name: OVN_MULTICAST_ENABLE
-          value: ""
+          value: {{ .Values.multicast.enable | quote }}
         - name: OVN_ACL_LOGGING_RATE_LIMIT
-          value: "20"
+          value: {{ .Values.networkPolicy.aclLoggingRateLimit | quote }}
         - name: OVN_STATELESS_NETPOL_ENABLE
-          value: "true"
+          value: {{ .Values.networkPolicy.statelessEnable | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:

@@ -11,6 +11,44 @@ resourceName: nvidia.com/bf3-p0-vfs
 # -- The name of the NetworkAttachmentDefinition
 nadName: dpf-ovn-kubernetes
 
+# -- Egress feature configuration (applies to all manifests)
+egress:
+  # -- Enable EgressIP feature
+  ipEnable: true
+  # -- Enable EgressService feature
+  serviceEnable: true
+  # -- Enable EgressFirewall feature
+  firewallEnable: true
+  # -- Enable EgressQoS feature
+  qosEnable: true
+
+# -- Multi-network (UDN - User Defined Network) feature configuration (applies to all manifests)
+multiNetwork:
+  # -- Enable multi-network/UDN support
+  enable: true
+
+# -- Admin Network Policy feature configuration (applies to all manifests)
+adminNetworkPolicy:
+  # -- Enable Admin Network Policy support
+  enable: true
+
+# -- Multicast feature configuration (applies to all manifests)
+multicast:
+  # -- Enable multicast support
+  enable: true
+
+# -- Network policy configuration (applies to all manifests)
+networkPolicy:
+  # -- Enable stateless network policy mode for better performance
+  statelessEnable: true
+  # -- ACL logging rate limit (logs per second)
+  aclLoggingRateLimit: 20
+
+# -- QoS (Quality of Service) feature configuration (applies to all manifests)
+qos:
+  # -- Enable OVN native network QoS support for bandwidth limiting
+  enable: true
+
 # -- Variables related to manifests that are deployed for nodes with DPU
 nodeWithDPUManifests:
   enabled: false

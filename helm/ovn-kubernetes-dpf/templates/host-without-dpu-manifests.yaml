@@ -344,7 +344,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_EGRESSSERVICE_ENABLE
-          value: ""
+          value: {{ .Values.egress.serviceEnable | quote }}
         - name: OVN_DAEMONSET_VERSION
           value: "1.1.0"
         - name: OVNKUBE_LOGLEVEL
@@ -406,15 +406,17 @@ spec:
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: ""
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
-          value: ""
+          value: {{ .Values.adminNetworkPolicy.enable | quote }}
         - name: OVN_EGRESSIP_ENABLE
-          value: ""
+          value: {{ .Values.egress.ipEnable | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
           value: "9107"
         - name: OVN_EGRESSFIREWALL_ENABLE
-          value: ""
+          value: {{ .Values.egress.firewallEnable | quote }}
         - name: OVN_EGRESSQOS_ENABLE
-          value: ""
+          value: {{ .Values.egress.qosEnable | quote }}
+        - name: OVN_NETWORK_QOS_ENABLE
+          value: {{ .Values.qos.enable | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -446,7 +448,7 @@ spec:
         - name: OVN_V6_MASQUERADE_SUBNET
           value: "fd69::/112"
         - name: OVN_MULTICAST_ENABLE
-          value: ""
+          value: {{ .Values.multicast.enable | quote }}
         - name: OVN_UNPRIVILEGED_MODE
           value: "no"
         - name: OVN_EX_GW_NETWORK_INTERFACE
@@ -468,15 +470,15 @@ spec:
         - name: OVN_LFLOW_CACHE_LIMIT_KB
           value: ""
         - name: OVN_MULTI_NETWORK_ENABLE
-          value: "false"
+          value: {{ .Values.multiNetwork.enable | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: ""
         - name: OVN_EMPTY_LB_EVENTS
           value: ""
         - name: OVN_ACL_LOGGING_RATE_LIMIT
-          value: "20"
+          value: {{ .Values.networkPolicy.aclLoggingRateLimit | quote }}
         - name: OVN_STATELESS_NETPOL_ENABLE
-          value: "true"
+          value: {{ .Values.networkPolicy.statelessEnable | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:

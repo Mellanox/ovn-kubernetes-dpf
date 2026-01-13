@@ -211,13 +211,13 @@ spec:
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: ""
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
-          value: ""
+          value: {{ .Values.adminNetworkPolicy.enable | quote }}
         - name: OVN_EGRESSIP_ENABLE
-          value: ""
+          value: {{ .Values.egress.ipEnable | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
           value: "9107"
         - name: OVN_EGRESSSERVICE_ENABLE
-          value: ""
+          value: {{ .Values.egress.serviceEnable | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -249,7 +249,7 @@ spec:
         - name: OVN_V6_MASQUERADE_SUBNET
           value: "fd69::/112"
         - name: OVN_MULTICAST_ENABLE
-          value: ""
+          value: {{ .Values.multicast.enable | quote }}
         - name: OVN_UNPRIVILEGED_MODE
           value: "no"
         - name: OVN_EX_GW_NETWORK_INTERFACE
