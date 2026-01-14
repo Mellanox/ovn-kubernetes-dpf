@@ -113,9 +113,26 @@ gatewayOpts: ""
 # -- MTU of network interface in a Kubernetes pod
 mtu: 1400
 
+# -- Logging configuration (applies to all manifests)
+logging:
+  # -- OVN Kubernetes log level (0=debug, 5=fatal)
+  logLevel: 4
+  # -- Maximum size in MB of the log file before rotation
+  logFileMaxSize: 100
+  # -- Maximum number of old log files to retain
+  logFileMaxBackups: 5
+  # -- Maximum number of days to retain old log files
+  logFileMaxAge: 5
+
 global:
   # -- The name of the secret used to pull images. Applies to all relevant manifests.
   imagePullSecretName: ""
+  # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
+  enableNetworkSegmentation: true
+  # -- Configure to enable workloads with preconfigured network connect to user defined networks (UDN) with ovn-kubernetes
+  enablePreconfiguredUDNAddresses: false
+  # -- Configure to use DNSNameResolver CRD feature with ovn-kubernetes
+  enableDNSNameResolver: false
 
 # -- Variables related to common manifests used by components in both DPU and Host cluster
 commonManifests:

@@ -163,13 +163,13 @@ spec:
         - name: OVN_DAEMONSET_VERSION
           value: "1.1.0"
         - name: OVNKUBE_LOGLEVEL
-          value: "4"
+          value: {{ default 4 .Values.logging.logLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE
-          value: "100"
+          value: {{ default 100 .Values.logging.logFileMaxSize | quote }}
         - name: OVNKUBE_LOGFILE_MAXBACKUPS
-          value: "5"
+          value: {{ default 5 .Values.logging.logFileMaxBackups | quote }}
         - name: OVNKUBE_LOGFILE_MAXAGE
-          value:  "5"
+          value: {{ default 5 .Values.logging.logFileMaxAge | quote }}
         - name: OVN_NET_CIDR
           valueFrom:
             configMapKeyRef:

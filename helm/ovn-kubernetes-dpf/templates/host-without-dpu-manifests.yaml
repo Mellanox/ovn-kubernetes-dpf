@@ -348,13 +348,13 @@ spec:
         - name: OVN_DAEMONSET_VERSION
           value: "1.1.0"
         - name: OVNKUBE_LOGLEVEL
-          value: "4"
+          value: {{ default 4 .Values.logging.logLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE
-          value: "100"
+          value: {{ default 100 .Values.logging.logFileMaxSize | quote }}
         - name: OVNKUBE_LOGFILE_MAXBACKUPS
-          value: "5"
+          value: {{ default 5 .Values.logging.logFileMaxBackups | quote }}
         - name: OVNKUBE_LOGFILE_MAXAGE
-          value: "5"
+          value: {{ default 5 .Values.logging.logFileMaxAge | quote }}
         - name: OVNKUBE_LIBOVSDB_CLIENT_LOGFILE
           value: ""
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
@@ -471,6 +471,10 @@ spec:
           value: ""
         - name: OVN_MULTI_NETWORK_ENABLE
           value: {{ .Values.multiNetwork.enable | quote }}
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
+        - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
+          value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: ""
         - name: OVN_EMPTY_LB_EVENTS
@@ -497,7 +501,7 @@ spec:
         - name: OVN_ENABLE_SVC_TEMPLATE_SUPPORT
           value: "false"
         - name: OVN_ENABLE_DNSNAMERESOLVER
-          value: "false"
+          value: {{ default "false" .Values.global.enableDNSNameResolver | quote }}
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnkube-node"]
