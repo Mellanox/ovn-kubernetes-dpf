@@ -89,6 +89,14 @@ commonManifests:
 # if it's not set.
 leaseNamespace: ""
 
+# -- DPU Health Check Configuration
+# Controls the lease-based health monitoring for DPU nodes
+dpuHealthCheck:
+  # -- Interval in seconds at which the DPU updates its lease (set to 0 to disable health check)
+  renewInterval: 10
+  # -- Lease duration in seconds before the DPU is considered unhealthy
+  leaseDuration: 40
+
 # DPF Contract. These values are effective only for manifests related to hosts that
 # have a DPU and the DPU manifests themselves.
 serviceDaemonSet:

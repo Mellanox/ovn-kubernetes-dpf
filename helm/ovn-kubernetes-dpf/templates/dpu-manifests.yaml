@@ -715,6 +715,10 @@ spec:
           value: "dpu"
         - name: OVNKUBE_NODE_LEASE_NAMESPACE
           value: {{ default .Release.Namespace .Values.leaseNamespace }}
+        - name: OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL
+          value: {{ .Values.dpuHealthCheck.renewInterval | quote }}
+        - name: OVNKUBE_NODE_DPU_LEASE_DURATION
+          value: {{ .Values.dpuHealthCheck.leaseDuration | quote }}
         readinessProbe:
           httpGet:
             path: /metrics
