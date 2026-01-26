@@ -9,6 +9,7 @@
 # So this file will change over time.
 
 ARG BUILDER_IMAGE
+
 #############################################
 # Stage to build OVN Kubernetes from Source #
 #############################################
@@ -81,3 +82,4 @@ LABEL io.k8s.display-name="ovn-kubernetes" \
 
 WORKDIR /root
 ENTRYPOINT /root/ovnkube.sh
+

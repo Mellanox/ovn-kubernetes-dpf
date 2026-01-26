@@ -36,7 +36,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make -C ovn-kubernetes/d
 # Main Ubuntu Image Stage      #
 #################################
 
-FROM ubuntu:25.04
+FROM ubuntu:25.10
 
 ARG TARGETARCH
 ARG TARGETOS=linux
@@ -82,3 +82,4 @@ LABEL io.k8s.display-name="ovn-kubernetes" \
 
 WORKDIR /root
 ENTRYPOINT /root/ovnkube.sh
+
