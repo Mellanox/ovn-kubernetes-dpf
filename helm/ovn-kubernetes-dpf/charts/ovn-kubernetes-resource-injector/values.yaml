@@ -33,3 +33,6 @@ controllerManager:
     effect: NoSchedule
 resourceName: ""
 nadName: dpf-ovn-kubernetes
+# -- The label that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection.
+# Format: key=value
+dpuHostLabel: k8s.ovn.org/dpu-host=
