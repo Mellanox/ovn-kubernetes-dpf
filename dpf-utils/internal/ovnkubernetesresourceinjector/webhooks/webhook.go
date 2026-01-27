@@ -19,7 +19,6 @@ package webhooks
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -27,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -49,6 +48,10 @@ type NetworkInjectorSettings struct {
 	// NADNamespace is the namespace of the network attachment definition that the injector should use to configure VFs
 	// for the default network
 	NADNamespace string
+	// DPUHostLabelKey is the label key that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection
+	DPUHostLabelKey string
+	// DPUHostLabelValue is the label value of DPUHostLabelKey
+	DPUHostLabelValue string
 }
 
 const (
@@ -57,13 +60,6 @@ const (
 	netAttachDefResourceNameAnnotation = "k8s.v1.cni.cncf.io/resourceName"
 	// annotationKeyToBeInjected is the multus annotation we inject to the pods so that multus can inject the VFs
 	annotationKeyToBeInjected = "v1.multus-cni.io/default-network"
-)
-
-var (
-	controlPlaneNodeLabels = map[string]bool{
-		"node-role.kubernetes.io/master":        true,
-		"node-role.kubernetes.io/control-plane": true,
-	}
 )
 
 var _ webhook.CustomDefaulter = &NetworkInjector{}
@@ -81,25 +77,33 @@ func (webhook *NetworkInjector) SetupWebhookWithManager(mgr ctrl.Manager) error 
 
 // Default implements webhook.Defaulter so a webhook will be registered for the type.
 func (webhook *NetworkInjector) Default(ctx context.Context, obj runtime.Object) error {
-	log := ctrl.LoggerFrom(ctx)
-
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		return apierrors.NewBadRequest(fmt.Sprintf("expected a Pod but got a %T", obj))
 	}
 
-	ctrl.LoggerInto(ctx, log.WithValues("Pod", types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}))
+	// Use GenerateName if Name is not set yet (pod is being created by a controller)
+	podName := pod.Name
+	if podName == "" {
+		podName = pod.GenerateName
+	}
+
+	// Update the logger in the context with pod information
+	log := ctrl.LoggerFrom(ctx).WithValues("podName", podName, "podNamespace", pod.Namespace)
+	ctx = ctrl.LoggerInto(ctx, log)
+
 	// If the pod is on the host network no-op.
 	if pod.Spec.HostNetwork {
 		return nil
 	}
 
-	// If the pod explicitly selects a control plane node no-op.
-	controlPlanePod, err := webhook.isScheduledToControlPlane(ctx, pod)
+	// Skip injection if the pod is explicitly scheduled to a node without the OVNK dpu-host label.
+	isScheduledToNodesWithoutDPU, err := webhook.isScheduledToNodesWithoutDPU(ctx, pod)
 	if err != nil {
 		return err
 	}
-	if controlPlanePod {
+
+	if isScheduledToNodesWithoutDPU {
 		return nil
 	}
 
@@ -131,82 +135,52 @@ func getVFResourceName(ctx context.Context, c client.Reader, netAttachDefName st
 	return "", fmt.Errorf("resource can't be found in network attachment definition because annotation %s doesn't exist", netAttachDefResourceNameAnnotation)
 }
 
-// If the pod has nodeAffinity set to a specific name check if the node it's scheduled to is a control plane node.
-// This is the case for pods created by DaemonSets which set node affinity matching to a node name on creation.
-func (webhook *NetworkInjector) isScheduledToControlPlane(ctx context.Context, pod *corev1.Pod) (bool, error) {
-	// If the pod has a control plane node selector no-op.
-	for label := range controlPlaneNodeLabels {
-		if _, ok := pod.Spec.NodeSelector[label]; ok {
-			return true, nil
+// isScheduledToNodesWithoutDPU checks if all nodes matching the pod's scheduling requirements lack the OVNK dpu-host label.
+// Returns true if all matching nodes lack the label (skip VF injection), false otherwise (inject by default).
+func (webhook *NetworkInjector) isScheduledToNodesWithoutDPU(ctx context.Context, pod *corev1.Pod) (bool, error) {
+	// Get the required node affinity from the pod (combines nodeSelector and affinity)
+	requiredNodeAffinity := nodeaffinity.GetRequiredNodeAffinity(pod)
+
+	// List all nodes
+	nodeList := &corev1.NodeList{}
+	if err := webhook.Client.List(ctx, nodeList); err != nil {
+		return false, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	// Filter nodes that match the pod's scheduling requirements
+	// TODO: Optimize for speed at scale with listing nodes that match selector instead of listing all nodes and filtering
+	// them.
+	var matchingNodes []corev1.Node
+	for _, node := range nodeList.Items {
+		matches, err := requiredNodeAffinity.Match(&node)
+		if err != nil {
+			return false, fmt.Errorf("failed to match node affinity: %w", err)
+		}
+		if matches {
+			matchingNodes = append(matchingNodes, node)
 		}
 	}
-	if terms := getNodeSelectorTerms(pod); terms != nil {
-		for _, term := range terms {
-			// If the pod selects for a control plane node label return true.
-			if term.MatchExpressions != nil {
-				for _, expression := range term.MatchExpressions {
-					if _, ok := controlPlaneNodeLabels[expression.Key]; ok {
-						if expression.Operator == corev1.NodeSelectorOpExists {
-							return true, nil
-						}
 
-						if expression.Operator == corev1.NodeSelectorOpIn &&
-							slices.Contains(expression.Values, "") {
-							return true, nil
-						}
-					}
-				}
-			}
-
-			// If the pod selects a specific control plane nodename. This is the case for DaemonSet pods.
-			isControlPlanePod, err := webhook.hasControlPlaneNodeName(ctx, term)
-			if err != nil {
-				return false, err
-			}
-			if isControlPlanePod {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func (webhook *NetworkInjector) hasControlPlaneNodeName(ctx context.Context, term corev1.NodeSelectorTerm) (bool, error) {
-	var nodeName string
-	if term.MatchFields != nil {
-		for _, field := range term.MatchFields {
-			if field.Key == "metadata.name" {
-				nodeName = field.Values[0]
-			}
-		}
-	}
-	if nodeName == "" {
-		return false, nil
-	}
-	node := &corev1.Node{}
-	if err := webhook.Client.Get(ctx, client.ObjectKey{Namespace: "", Name: nodeName}, node); err != nil {
-		return false, fmt.Errorf("failed to get node pod is scheduled to %q: %w", nodeName, err)
-	}
-	if node.Labels == nil {
+	// If no nodes match, return false (inject by default - pod might not be schedulable or node might join later)
+	// Notes in case nodeSelector is correct and nodes might join later:
+	// * We expect cases where Pods targeting directly or indirectly only nodes without DPU to be stuck in Pending. User
+	//   will need to recreate the Pods.
+	if len(matchingNodes) == 0 {
 		return false, nil
 	}
 
-	for label := range controlPlaneNodeLabels {
-		if _, ok := node.Labels[label]; ok {
-			return true, nil
+	// Check if any matching node has the OVNK dpu-host label
+	for _, node := range matchingNodes {
+		if node.Labels != nil {
+			if value, hasDPULabel := node.Labels[webhook.Settings.DPUHostLabelKey]; hasDPULabel && value == webhook.Settings.DPUHostLabelValue {
+				// At least one matching node has the DPU label, return false (inject VFs)
+				return false, nil
+			}
 		}
 	}
-	return false, nil
-}
 
-func getNodeSelectorTerms(pod *corev1.Pod) []corev1.NodeSelectorTerm {
-	if pod.Spec.Affinity != nil &&
-		pod.Spec.Affinity.NodeAffinity != nil &&
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil &&
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms != nil {
-		return pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
-	}
-	return nil
+	// All matching nodes lack the OVNK dpu-host label, return true (don't inject VFs)
+	return true, nil
 }
 
 func injectNetworkResources(ctx context.Context, pod *corev1.Pod, netAttachDefName string, netAttachDefNamespace string, vfResourceName corev1.ResourceName) error {
