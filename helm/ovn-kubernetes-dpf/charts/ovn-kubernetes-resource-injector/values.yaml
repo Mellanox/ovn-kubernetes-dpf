@@ -33,3 +33,5 @@ controllerManager:
     effect: NoSchedule
 resourceName: ""
 nadName: dpf-ovn-kubernetes
+dpuHostLabelKey: k8s.ovn.org/dpu-host
+dpuHostLabelValue: ""

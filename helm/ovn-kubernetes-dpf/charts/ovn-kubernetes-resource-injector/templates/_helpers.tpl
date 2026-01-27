@@ -79,6 +79,8 @@ The args to be passed to the webhook
 {{- $args := .Values.controllerManager.webhook.args }}
 {{- $args = append $args (printf "--nad-namespace=%s" .Release.Namespace) }}
 {{- $args = append $args (printf "--nad-name=%s" .Values.nadName) }}
+{{- $args = append $args (printf "--dpu-host-label-key=%s" .Values.dpuHostLabelKey) }}
+{{- $args = append $args (printf "--dpu-host-label-value=%s" .Values.dpuHostLabelValue) }}
 {{- toYaml $args }}
 {{- end }}
 

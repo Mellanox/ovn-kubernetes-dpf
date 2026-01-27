@@ -4,6 +4,10 @@ nameOverride: ovn-kubernetes
 ovn-kubernetes-resource-injector:
   enabled: false
   resourceName: nvidia.com/bf3-p0-vfs
+  # -- The label key that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection
+  dpuHostLabelKey: k8s.ovn.org/dpu-host
+  # -- The value of the dpu-host label
+  dpuHostLabelValue: ""
   controllerManager:
     webhook:
       command:
