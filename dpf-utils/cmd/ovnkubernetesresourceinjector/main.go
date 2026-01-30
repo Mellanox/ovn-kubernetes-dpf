@@ -56,6 +56,7 @@ func main() {
 	var nadNamespace string
 	var dpuHostLabelKey string
 	var dpuHostLabelValue string
+	var prioritizeOffloading bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -76,6 +77,8 @@ func main() {
 		"The label key that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection")
 	flag.StringVar(&dpuHostLabelValue, "dpu-host-label-value", "",
 		"The value of the dpu-host label")
+	flag.BoolVar(&prioritizeOffloading, "prioritize-offloading", true,
+		"When enabled, injects VFs when pod selectors match both nodes with and without the DPU label")
 
 	opts := zap.Options{
 		Development: true,
@@ -139,10 +142,11 @@ func main() {
 	if err = (&webhooks.NetworkInjector{
 		Client: mgr.GetClient(),
 		Settings: webhooks.NetworkInjectorSettings{
-			NADName:           nadName,
-			NADNamespace:      nadNamespace,
-			DPUHostLabelKey:   dpuHostLabelKey,
-			DPUHostLabelValue: dpuHostLabelValue,
+			NADName:              nadName,
+			NADNamespace:         nadNamespace,
+			DPUHostLabelKey:      dpuHostLabelKey,
+			DPUHostLabelValue:    dpuHostLabelValue,
+			PrioritizeOffloading: prioritizeOffloading,
 		},
 	}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DPFOperatorConfig")

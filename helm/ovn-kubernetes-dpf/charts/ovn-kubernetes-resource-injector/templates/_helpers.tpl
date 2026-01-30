@@ -81,6 +81,7 @@ The args to be passed to the webhook
 {{- $args = append $args (printf "--nad-name=%s" .Values.nadName) }}
 {{- $args = append $args (printf "--dpu-host-label-key=%s" .Values.dpuHostLabelKey) }}
 {{- $args = append $args (printf "--dpu-host-label-value=%s" .Values.dpuHostLabelValue) }}
+{{- $args = append $args (printf "--prioritize-offloading=%t" .Values.prioritizeOffloading) }}
 {{- toYaml $args }}
 {{- end }}
 
