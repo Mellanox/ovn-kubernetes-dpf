@@ -24,6 +24,7 @@ nodeWithDPUManifests:
   dpuServiceAccountNamespace: ovn-kubernetes
   cniBinDir: "/opt/cni/bin"
   cniConfDir: "/etc/cni/net.d"
+  cniVersion: "1.1.0"
 
 # -- Variables related to manifests that are deployed for nodes without DPU
 nodeWithoutDPUManifests:
@@ -34,6 +35,7 @@ nodeWithoutDPUManifests:
     pullPolicy: IfNotPresent
   cniBinDir: "/opt/cni/bin"
   cniConfDir: "/etc/cni/net.d"
+  cniVersion: "1.1.0"
 
 # -- Variables related to manifests that are deployed on the DPU
 dpuManifests:
@@ -53,6 +55,7 @@ dpuManifests:
   gatewayDiscoveryNetwork: "169.254.99.100/32" # This is a "dummy" subnet used to get the default gateway address from DHCP server (via option 121)
   cniBinDir: "/opt/cni/bin"
   cniConfDir: "/etc/cni/net.d"
+  cniVersion: "1.1.0"
 
 # -- Variables related to manifests that are needed to setup the OVN Control Plane
 controlPlaneManifests:

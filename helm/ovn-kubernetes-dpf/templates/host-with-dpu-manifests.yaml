@@ -170,6 +170,8 @@ spec:
           value: "5"
         - name: OVNKUBE_LOGFILE_MAXAGE
           value:  "5"
+        - name: OVN_CNI_VERSION
+          value: {{ default "1.1.0" .Values.nodeWithDPUManifests.cniVersion | quote }}
         - name: OVN_NET_CIDR
           valueFrom:
             configMapKeyRef:

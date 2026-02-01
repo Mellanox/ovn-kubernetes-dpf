@@ -355,6 +355,8 @@ spec:
           value: "5"
         - name: OVNKUBE_LOGFILE_MAXAGE
           value: "5"
+        - name: OVN_CNI_VERSION
+          value: {{ default "1.1.0" .Values.nodeWithoutDPUManifests.cniVersion | quote }}
         - name: OVNKUBE_LIBOVSDB_CLIENT_LOGFILE
           value: ""
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
