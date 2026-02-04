@@ -252,6 +252,9 @@ func (p *DPUCNIProvisioner) findAndSetKubernetesHostNameInOVS() error {
 	if err := p.ovsClient.SetKubernetesHostNodeName(hostName); err != nil {
 		return fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
 	}
+	if err := p.ovsClient.SetHostName(hostName); err != nil {
+		return fmt.Errorf("error while setting the hostname external ID in OVS: %w", err)
+	}
 	return nil
 }
 

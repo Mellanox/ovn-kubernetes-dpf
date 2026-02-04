@@ -196,6 +196,12 @@ func (c *ovsClient) SetKubernetesHostNodeName(name string) error {
 	return err
 }
 
+// SetHostName sets the hostname external ID in the Open_vSwitch table in OVS
+func (c *ovsClient) SetHostName(name string) error {
+	_, err := c.runOVSVsctl("set", "Open_vSwitch", ".", fmt.Sprintf("external_ids:hostname=%s", name))
+	return err
+}
+
 // InterfaceToBridge returns the bridge an interface exists in
 func (c *ovsClient) InterfaceToBridge(iface string) (string, error) {
 	out, err := c.runOVSVsctl("iface-to-br", iface)
