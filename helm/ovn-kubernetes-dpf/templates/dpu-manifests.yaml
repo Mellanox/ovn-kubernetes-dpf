@@ -681,7 +681,7 @@ spec:
         - name: OVN_LFLOW_CACHE_LIMIT_KB
           value: ""
         - name: OVN_MULTI_NETWORK_ENABLE
-          value: "false"
+          value: "{{ .Values.dpuManifests.ovnMultiNetworkEnable | default "true" }}"
         - name: OVN_EMPTY_LB_EVENTS
           value: ""
         - name: OVN_ACL_LOGGING_RATE_LIMIT
@@ -704,7 +704,7 @@ spec:
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
           value: "false"
         - name: OVN_DISABLE_REQUESTEDCHASSIS
-          value: "true"
+          value: {{ default "false" .Values.dpuManifests.ovnDisableRequestedchassis | quote }}
         - name: OVN_ENABLE_SVC_TEMPLATE_SUPPORT
           value: "false"
         - name: OVN_ENABLE_DNSNAMERESOLVER

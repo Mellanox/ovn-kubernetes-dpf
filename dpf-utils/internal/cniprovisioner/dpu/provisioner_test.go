@@ -133,6 +133,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 
 			fakeNode.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Node"))
 			fakeNode.SetManagedFields(nil)
@@ -243,6 +244,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 
 			fakeNode.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Node"))
 			fakeNode.SetManagedFields(nil)
@@ -397,6 +399,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 
 			err = provisioner.RunOnce()
 			Expect(err).ToNot(HaveOccurred())
@@ -418,6 +421,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 
 			err = provisioner.RunOnce()
 			Expect(err).ToNot(HaveOccurred())
@@ -539,6 +543,7 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 			}))
 
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			brOVNAddress, err := netlink.ParseIPNet("192.168.0.3/23")
 			Expect(err).ToNot(HaveOccurred())
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
@@ -646,6 +651,7 @@ network:
 			gateway := net.ParseIP("192.168.1.254")
 			By("Checking the first run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{}, nil)
 
 			err = provisioner.RunOnce()
@@ -653,6 +659,7 @@ network:
 
 			By("Checking the second run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
@@ -678,6 +685,7 @@ network:
 
 			By("Checking the third run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
@@ -760,6 +768,7 @@ network:
 
 			By("Checking the first run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{}, nil)
 
 			err = provisioner.RunOnce()
@@ -769,6 +778,7 @@ network:
 
 			By("Checking the second run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{}, nil)
 
 			err = provisioner.RunOnce()
@@ -778,6 +788,7 @@ network:
 
 			By("Checking the third run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{}, nil)
 
 			err = provisioner.RunOnce()
@@ -787,6 +798,7 @@ network:
 
 			By("Checking the fourth run")
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
@@ -833,5 +845,6 @@ func networkHelperMockAll(networkHelper *networkhelperMock.MockNetworkHelper) {
 // ovsClientMockAll mocks all ovsclient functions. Useful for tests where we don't test the ovsclient calls
 func ovsClientMockAll(ovsClient *ovsclientMock.MockOVSClient) {
 	ovsClient.EXPECT().SetKubernetesHostNodeName(gomock.Any()).AnyTimes()
+	ovsClient.EXPECT().SetHostName(gomock.Any()).AnyTimes()
 	ovsClient.EXPECT().SetOVNEncapIP(gomock.Any()).AnyTimes()
 }
