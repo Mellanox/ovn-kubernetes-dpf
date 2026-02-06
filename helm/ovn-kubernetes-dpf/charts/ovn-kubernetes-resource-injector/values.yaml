@@ -36,3 +36,9 @@ nadName: dpf-ovn-kubernetes
 # -- The label that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection.
 # Format: key=value
 dpuHostLabel: k8s.ovn.org/dpu-host=
+# -- When enabled, injects VFs when pod selectors match both nodes with and without the DPU label, in case both such
+# nodes exist in the cluster.
+# In either case, the admin needs to ensure that they have sufficient amount of workers with DPU (when enabled)
+# or without DPU (when disabled) so that Pods can fit in case the selectors match both types of nodes.
+# Note that when disabled the webhook may inject additional affinity to ensure Pods land on the correct nodes.
+prioritizeOffloading: true

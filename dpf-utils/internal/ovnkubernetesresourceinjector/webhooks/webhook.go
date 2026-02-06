@@ -52,6 +52,8 @@ type NetworkInjectorSettings struct {
 	DPUHostLabelKey string
 	// DPUHostLabelValue is the label value of DPUHostLabelKey
 	DPUHostLabelValue string
+	// PrioritizeOffloading when enabled, injects VFs when pod selectors match both nodes with and without the DPU label
+	PrioritizeOffloading bool
 }
 
 const (
@@ -97,19 +99,30 @@ func (webhook *NetworkInjector) Default(ctx context.Context, obj runtime.Object)
 		return nil
 	}
 
-	// Skip injection if the pod is explicitly scheduled to a node without the OVNK dpu-host label.
-	isScheduledToNodesWithoutDPU, err := webhook.isScheduledToNodesWithoutDPU(ctx, pod)
+	// Get VF resource name early to check if pod already has resources
+	vfResourceName, err := getVFResourceName(ctx, webhook.Client, webhook.Settings.NADName, webhook.Settings.NADNamespace)
+	if err != nil {
+		return fmt.Errorf("error while getting VF resource name: %w", err)
+	}
+
+	// If pod already has VF resources, inject without checking affinity
+	if podHasVFResources(pod, vfResourceName) {
+		return injectNetworkResources(ctx, pod, webhook.Settings.NADName, webhook.Settings.NADNamespace, vfResourceName)
+	}
+
+	// Determine if injection should be skipped and if node affinity should be added for non-DPU workers
+	skipInjection, shouldAddAffinityForNonDPUNodes, err := webhook.shouldSkipInjection(ctx, pod)
 	if err != nil {
 		return err
 	}
 
-	if isScheduledToNodesWithoutDPU {
-		return nil
+	// Add node affinity for non-DPU nodes if needed
+	if shouldAddAffinityForNonDPUNodes {
+		addAffinityForNonDPUNodes(ctx, pod, webhook.Settings.DPUHostLabelKey, webhook.Settings.DPUHostLabelValue)
 	}
 
-	vfResourceName, err := getVFResourceName(ctx, webhook.Client, webhook.Settings.NADName, webhook.Settings.NADNamespace)
-	if err != nil {
-		return fmt.Errorf("error while getting VF resource name: %w", err)
+	if skipInjection {
+		return nil
 	}
 
 	return injectNetworkResources(ctx, pod, webhook.Settings.NADName, webhook.Settings.NADNamespace, vfResourceName)
@@ -135,26 +148,23 @@ func getVFResourceName(ctx context.Context, c client.Reader, netAttachDefName st
 	return "", fmt.Errorf("resource can't be found in network attachment definition because annotation %s doesn't exist", netAttachDefResourceNameAnnotation)
 }
 
-// isScheduledToNodesWithoutDPU checks if all nodes matching the pod's scheduling requirements lack the OVNK dpu-host label.
-// Returns true if all matching nodes lack the label (skip VF injection), false otherwise (inject by default).
-func (webhook *NetworkInjector) isScheduledToNodesWithoutDPU(ctx context.Context, pod *corev1.Pod) (bool, error) {
+// shouldSkipInjection determines if VF injection should be skipped based on the pod's scheduling requirements and matching nodes.
+func (webhook *NetworkInjector) shouldSkipInjection(ctx context.Context, pod *corev1.Pod) (skipInjection bool, shouldAddAffinityForNonDPUNodes bool, error error) {
 	// Get the required node affinity from the pod (combines nodeSelector and affinity)
 	requiredNodeAffinity := nodeaffinity.GetRequiredNodeAffinity(pod)
 
 	// List all nodes
 	nodeList := &corev1.NodeList{}
 	if err := webhook.Client.List(ctx, nodeList); err != nil {
-		return false, fmt.Errorf("failed to list nodes: %w", err)
+		return false, false, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
 	// Filter nodes that match the pod's scheduling requirements
-	// TODO: Optimize for speed at scale with listing nodes that match selector instead of listing all nodes and filtering
-	// them.
 	var matchingNodes []corev1.Node
 	for _, node := range nodeList.Items {
 		matches, err := requiredNodeAffinity.Match(&node)
 		if err != nil {
-			return false, fmt.Errorf("failed to match node affinity: %w", err)
+			return false, false, fmt.Errorf("failed to match node affinity: %w", err)
 		}
 		if matches {
 			matchingNodes = append(matchingNodes, node)
@@ -165,33 +175,165 @@ func (webhook *NetworkInjector) isScheduledToNodesWithoutDPU(ctx context.Context
 	// Notes in case nodeSelector is correct and nodes might join later:
 	// * We expect cases where Pods targeting directly or indirectly only nodes without DPU to be stuck in Pending. User
 	//   will need to recreate the Pods.
+	// * We don't take into account the PrioritizeOffloading setting here because in case we would, when set to false we
+	//   might have ended up with Pods indirectly targeting upcoming DPU Nodes without a VF injected but with nodeAffinity
+	//   to ignore such nodes set. This would be hard to debug.
 	if len(matchingNodes) == 0 {
-		return false, nil
+		return false, false, nil
 	}
 
-	// Check if any matching node has the OVNK dpu-host label
+	// Count nodes with and without the DPU label
+	nodesWithDPU := 0
+	nodesWithoutDPU := 0
 	for _, node := range matchingNodes {
+		hasDPULabel := false
 		if node.Labels != nil {
-			if value, hasDPULabel := node.Labels[webhook.Settings.DPUHostLabelKey]; hasDPULabel && value == webhook.Settings.DPUHostLabelValue {
-				// At least one matching node has the DPU label, return false (inject VFs)
-				return false, nil
+			if value, exists := node.Labels[webhook.Settings.DPUHostLabelKey]; exists && value == webhook.Settings.DPUHostLabelValue {
+				hasDPULabel = true
 			}
+		}
+		if hasDPULabel {
+			nodesWithDPU++
+		} else {
+			nodesWithoutDPU++
 		}
 	}
 
-	// All matching nodes lack the OVNK dpu-host label, return true (don't inject VFs)
-	return true, nil
+	// This is the default mode where we prioritize scheduling on nodes with DPU in case there is ambiguity.
+	if webhook.Settings.PrioritizeOffloading {
+		// If at least one matching node has the DPU label, inject VFs
+		if nodesWithDPU > 0 {
+			return false, false, nil
+		}
+		// All matching nodes lack the DPU label, don't inject VFs
+		return true, false, nil
+	}
+
+	// This is the mode where we prioritize scheduling on nodes without DPU in case there is ambiguity.
+	// If some (but not all) matching nodes have the DPU label
+	if nodesWithDPU > 0 && nodesWithoutDPU > 0 {
+		// Request adding node affinity for non-DPU nodes to exclude DPU nodes, don't inject VFs
+		return true, true, nil
+	}
+
+	// If all matching nodes have the DPU label, inject VFs
+	if nodesWithDPU > 0 && nodesWithoutDPU == 0 {
+		return false, false, nil
+	}
+
+	// All matching nodes lack the DPU label, don't inject VFs
+	return true, false, nil
+}
+
+// podHasVFResources checks if the pod already has VF resources in either requests or limits.
+func podHasVFResources(pod *corev1.Pod, vfResourceName corev1.ResourceName) bool {
+	if len(pod.Spec.Containers) == 0 {
+		return false
+	}
+
+	if pod.Spec.Containers[0].Resources.Requests != nil {
+		if _, ok := pod.Spec.Containers[0].Resources.Requests[vfResourceName]; ok {
+			return true
+		}
+	}
+
+	if pod.Spec.Containers[0].Resources.Limits != nil {
+		if _, ok := pod.Spec.Containers[0].Resources.Limits[vfResourceName]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// addAffinityForNonDPUNodes patches the pod's node affinity to explicitly exclude nodes with the DPU label.
+func addAffinityForNonDPUNodes(ctx context.Context, pod *corev1.Pod, dpuHostLabelKey string, dpuHostLabelValue string) {
+	log := ctrl.LoggerFrom(ctx)
+
+	// Initialize pod affinity if needed
+	if pod.Spec.Affinity == nil {
+		pod.Spec.Affinity = &corev1.Affinity{}
+	}
+	if pod.Spec.Affinity.NodeAffinity == nil {
+		pod.Spec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	if pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{}
+	}
+
+	// Create a node selector term that excludes DPU nodes
+	excludeDPUTerm := corev1.NodeSelectorTerm{
+		MatchExpressions: []corev1.NodeSelectorRequirement{
+			{
+				Key:      dpuHostLabelKey,
+				Operator: corev1.NodeSelectorOpNotIn,
+				Values:   []string{dpuHostLabelValue},
+			},
+		},
+	}
+
+	// If there are existing terms, we need to add the DPU exclusion to each term (AND logic)
+	// If no existing terms, add the exclusion as a new term
+	terms := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) == 0 {
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = []corev1.NodeSelectorTerm{excludeDPUTerm}
+		log.Info("patched pod with node affinity to exclude DPU nodes")
+	} else {
+		// Add the DPU exclusion to all existing terms to maintain OR semantics across terms
+		// while adding AND logic within each term
+		patchedCount := 0
+		for i := range terms {
+			// Check if this specific term already has the exclusion to avoid duplicates
+			hasExclusion := false
+			for _, expr := range terms[i].MatchExpressions {
+				// Skip if the expression is not for the DPU label
+				if expr.Key != dpuHostLabelKey {
+					continue
+				}
+				// DoesNotExist is stricter than NotIn - it excludes any node with the label
+				if expr.Operator == corev1.NodeSelectorOpDoesNotExist {
+					hasExclusion = true
+					break
+				}
+				// Check if NotIn already includes the value
+				if expr.Operator == corev1.NodeSelectorOpNotIn {
+					for _, val := range expr.Values {
+						if val == dpuHostLabelValue {
+							hasExclusion = true
+							break
+						}
+					}
+					if hasExclusion {
+						break
+					}
+				}
+			}
+			if !hasExclusion {
+				terms[i].MatchExpressions = append(terms[i].MatchExpressions, corev1.NodeSelectorRequirement{
+					Key:      dpuHostLabelKey,
+					Operator: corev1.NodeSelectorOpNotIn,
+					Values:   []string{dpuHostLabelValue},
+				})
+				patchedCount++
+			}
+		}
+		if patchedCount > 0 {
+			log.Info("patched pod with node affinity to exclude DPU nodes", "termsCount", len(terms), "patchedTerms", patchedCount)
+		} else {
+			log.Info("all pod node affinity terms already exclude DPU nodes", "termsCount", len(terms))
+		}
+	}
 }
 
 func injectNetworkResources(ctx context.Context, pod *corev1.Pod, netAttachDefName string, netAttachDefNamespace string, vfResourceName corev1.ResourceName) error {
 	log := ctrl.LoggerFrom(ctx)
-	// Inject device requests. One additional VF.
+
+	// Initialize resources if not present
 	if pod.Spec.Containers[0].Resources.Requests == nil {
 		pod.Spec.Containers[0].Resources.Requests = corev1.ResourceList{}
 	}
 	if pod.Spec.Containers[0].Resources.Limits == nil {
 		pod.Spec.Containers[0].Resources.Limits = corev1.ResourceList{}
-
 	}
 	if _, ok := pod.Spec.Containers[0].Resources.Requests[vfResourceName]; ok {
 		res := pod.Spec.Containers[0].Resources.Requests[vfResourceName]
