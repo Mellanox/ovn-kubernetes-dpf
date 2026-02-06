@@ -31,50 +31,12 @@ import (
 )
 
 func TestNetworkInjector_Default(t *testing.T) {
-	g := NewWithT(t)
 	nodeWithoutDPUName := "node-without-dpu"
 	nodeWithDPUName := "node-with-dpu"
 	nodeWithNoLabelsName := "node-with-no-labels"
 	resourceName := corev1.ResourceName("test-resource")
 
-	objects := []client.Object{
-		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodeWithoutDPUName,
-				Labels: map[string]string{
-					"node-type":   "no-dpu",
-					"environment": "production",
-				},
-			},
-		},
-		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodeWithDPUName,
-				Labels: map[string]string{
-					"k8s.ovn.org/dpu-host": "",
-					"environment":          "production",
-				},
-			},
-		},
-		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodeWithNoLabelsName,
-			},
-		},
-		&unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"apiVersion": "k8s.cni.cncf.io/v1",
-				"kind":       "NetworkAttachmentDefinition",
-				"metadata": map[string]interface{}{
-					"name":      "dpf-ovn-kubernetes",
-					"namespace": "ovn-kubernetes",
-					"annotations": map[string]interface{}{
-						"k8s.v1.cni.cncf.io/resourceName": resourceName.String(),
-					},
-				},
-			},
-		},
-	}
+	objects := createTestObjects(resourceName, nodeWithoutDPUName, nodeWithDPUName, nodeWithNoLabelsName)
 
 	nodeWithoutDPUMatchExpressionsDoesNotExist := []corev1.NodeSelectorTerm{
 		{
@@ -325,6 +287,7 @@ func TestNetworkInjector_Default(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			s := scheme.Scheme
 			fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
 			webhook := &NetworkInjector{
@@ -347,51 +310,12 @@ func TestNetworkInjector_Default(t *testing.T) {
 }
 
 func TestNetworkInjector_PrioritizeOffloadingDisabled(t *testing.T) {
-	g := NewWithT(t)
 	nodeWithoutDPUName := "node-without-dpu"
 	nodeWithDPUName := "node-with-dpu"
+	nodeWithNoLabelsName := "node-with-no-labels"
 	resourceName := corev1.ResourceName("test-resource")
 
-	nodeWithNoLabelsName := "node-with-no-labels"
-
-	objects := []client.Object{
-		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodeWithoutDPUName,
-				Labels: map[string]string{
-					"node-type":   "no-dpu",
-					"environment": "production",
-				},
-			},
-		},
-		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodeWithDPUName,
-				Labels: map[string]string{
-					"k8s.ovn.org/dpu-host": "",
-					"environment":          "production",
-				},
-			},
-		},
-		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodeWithNoLabelsName,
-			},
-		},
-		&unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"apiVersion": "k8s.cni.cncf.io/v1",
-				"kind":       "NetworkAttachmentDefinition",
-				"metadata": map[string]interface{}{
-					"name":      "dpf-ovn-kubernetes",
-					"namespace": "ovn-kubernetes",
-					"annotations": map[string]interface{}{
-						"k8s.v1.cni.cncf.io/resourceName": resourceName.String(),
-					},
-				},
-			},
-		},
-	}
+	objects := createTestObjects(resourceName, nodeWithoutDPUName, nodeWithDPUName, nodeWithNoLabelsName)
 
 	basePod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -673,6 +597,7 @@ func TestNetworkInjector_PrioritizeOffloadingDisabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			s := scheme.Scheme
 			fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
 			webhook := &NetworkInjector{
@@ -720,8 +645,6 @@ func TestNetworkInjector_PrioritizeOffloadingDisabled(t *testing.T) {
 }
 
 func TestNetworkInjector_PreReqObjects(t *testing.T) {
-	g := NewWithT(t)
-
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-pod",
@@ -788,6 +711,7 @@ func TestNetworkInjector_PreReqObjects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			s := scheme.Scheme
 			fakeclient := fake.NewClientBuilder().WithObjects(tt.existingObjects...).WithScheme(s).Build()
 			webhook := &NetworkInjector{
@@ -811,7 +735,6 @@ func TestNetworkInjector_PreReqObjects(t *testing.T) {
 }
 
 func TestAddAffinityForNonDPUNodes(t *testing.T) {
-	g := NewWithT(t)
 	dpuLabelKey := "k8s.ovn.org/dpu-host"
 	dpuLabelValue := ""
 
@@ -990,6 +913,7 @@ func TestAddAffinityForNonDPUNodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			ctx := context.Background()
 			addAffinityForNonDPUNodes(ctx, tt.pod, dpuLabelKey, dpuLabelValue)
 
@@ -1044,4 +968,46 @@ func setSelectorTerms(pod *corev1.Pod, terms []corev1.NodeSelectorTerm) {
 	}
 	pod.Spec.Affinity.NodeAffinity.
 		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
+}
+
+// createTestObjects creates common test objects (nodes and NAD) used across multiple tests.
+func createTestObjects(resourceName corev1.ResourceName, nodeWithoutDPUName, nodeWithDPUName, nodeWithNoLabelsName string) []client.Object {
+	return []client.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeWithoutDPUName,
+				Labels: map[string]string{
+					"node-type":   "no-dpu",
+					"environment": "production",
+				},
+			},
+		},
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeWithDPUName,
+				Labels: map[string]string{
+					"k8s.ovn.org/dpu-host": "",
+					"environment":          "production",
+				},
+			},
+		},
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeWithNoLabelsName,
+			},
+		},
+		&unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "k8s.cni.cncf.io/v1",
+				"kind":       "NetworkAttachmentDefinition",
+				"metadata": map[string]interface{}{
+					"name":      "dpf-ovn-kubernetes",
+					"namespace": "ovn-kubernetes",
+					"annotations": map[string]interface{}{
+						"k8s.v1.cni.cncf.io/resourceName": resourceName.String(),
+					},
+				},
+			},
+		},
+	}
 }
