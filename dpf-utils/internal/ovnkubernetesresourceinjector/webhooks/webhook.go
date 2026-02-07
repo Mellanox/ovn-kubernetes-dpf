@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
@@ -153,9 +154,18 @@ func (webhook *NetworkInjector) shouldSkipInjection(ctx context.Context, pod *co
 	// Get the required node affinity from the pod (combines nodeSelector and affinity)
 	requiredNodeAffinity := nodeaffinity.GetRequiredNodeAffinity(pod)
 
-	// List all nodes
+	// Use the pod's nodeSelector to filter nodes at the API level for better performance
+	// This works because scheduler will need to satisfy both nodeSelector and nodeAffinity, so stripping down the original
+	// list of nodes to only the ones that match the nodeSelector is a valid optimization.
+	listOpts := []client.ListOption{}
+	if len(pod.Spec.NodeSelector) > 0 {
+		labelSelector := labels.SelectorFromSet(pod.Spec.NodeSelector)
+		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: labelSelector})
+	}
+
+	// List nodes (filtered by nodeSelector if present)
 	nodeList := &corev1.NodeList{}
-	if err := webhook.Client.List(ctx, nodeList); err != nil {
+	if err := webhook.Client.List(ctx, nodeList, listOpts...); err != nil {
 		return false, false, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
