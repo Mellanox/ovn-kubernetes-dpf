@@ -53,6 +53,10 @@ spec:
       imagePullSecrets:
       - name: {{ .Values.global.imagePullSecretName }}
       {{- end }}
+      {{- if .Values.controllerManager.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
       securityContext:
       serviceAccountName: {{ include "ovn-kubernetes-resource-injector.fullname" . }}
       terminationGracePeriodSeconds: 10

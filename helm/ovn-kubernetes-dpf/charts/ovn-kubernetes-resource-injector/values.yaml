@@ -22,6 +22,7 @@ controllerManager:
   replicas: 1
   serviceAccount:
     annotations: {}
+  hostNetwork: false
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
   tolerations:
