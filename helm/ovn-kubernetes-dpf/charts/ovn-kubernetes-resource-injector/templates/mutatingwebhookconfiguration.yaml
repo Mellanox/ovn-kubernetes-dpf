@@ -28,6 +28,10 @@ webhooks:
     resources:
     - pods
   sideEffects: None
+  namespaceSelector:
+    matchExpressions:
+    - key: ovn.dpu.nvidia.com/skip-injection
+      operator: DoesNotExist
   objectSelector:
     matchExpressions:
     - key: ovn.dpu.nvidia.com/skip-injection
