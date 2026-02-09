@@ -28,7 +28,10 @@ nodeWithDPUManifests:
     repository: ${OVNKUBERNETES_IMAGE}
     tag: ${TAG}
     pullPolicy: IfNotPresent
+  # -- Node management port netdev name. Mutually exclusive with nodeMgmtPortDpResourceName.
   nodeMgmtPortNetdev: ""
+  # -- Node management port device plugin resource name. Mutually exclusive with nodeMgmtPortNetdev.
+  nodeMgmtPortDpResourceName: ""
   dpuServiceAccountName: ovn-dpu
   dpuServiceAccountNamespace: ovn-kubernetes
   cniBinDir: "/opt/cni/bin"
