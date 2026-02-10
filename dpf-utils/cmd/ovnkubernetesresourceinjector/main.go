@@ -19,7 +19,9 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/nvidia/ovn-kubernetes-components/internal/ovnkubernetesresourceinjector/webhooks"
@@ -45,6 +47,22 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// parseLabelFlag parses a label flag in the format "key=value".
+// Returns an error if the format is invalid.
+func parseLabelFlag(label string) (key string, value string, err error) {
+	label = strings.TrimSpace(label)
+	parts := strings.SplitN(label, "=", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid label format %q: expected format is 'key=value'", label)
+	}
+	key = strings.TrimSpace(parts[0])
+	value = strings.TrimSpace(parts[1])
+	if key == "" {
+		return "", "", fmt.Errorf("invalid label format %q: key cannot be empty", label)
+	}
+	return key, value, nil
+}
+
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
@@ -54,6 +72,8 @@ func main() {
 	var syncPeriod time.Duration
 	var nadName string
 	var nadNamespace string
+	var dpuHostLabel string
+	var prioritizeOffloading bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -70,6 +90,10 @@ func main() {
 		"The name of the NetworkAttachmentDefinition the VF injector should use")
 	flag.StringVar(&nadNamespace, "nad-namespace", "ovn-kubernetes",
 		"The namespace of the NetworkAttachmentDefinition the VF injector should use")
+	flag.StringVar(&dpuHostLabel, "dpu-host-label", "k8s.ovn.org/dpu-host=",
+		"The label that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection. Format: key=value")
+	flag.BoolVar(&prioritizeOffloading, "prioritize-offloading", true,
+		"When enabled, injects VFs when pod selectors match both nodes with and without the DPU label")
 
 	opts := zap.Options{
 		Development: true,
@@ -78,6 +102,13 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Parse the DPU host label into key and value
+	dpuHostLabelKey, dpuHostLabelValue, err := parseLabelFlag(dpuHostLabel)
+	if err != nil {
+		setupLog.Error(err, "invalid dpu-host-label flag")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -133,8 +164,11 @@ func main() {
 	if err = (&webhooks.NetworkInjector{
 		Client: mgr.GetClient(),
 		Settings: webhooks.NetworkInjectorSettings{
-			NADName:      nadName,
-			NADNamespace: nadNamespace,
+			NADName:              nadName,
+			NADNamespace:         nadNamespace,
+			DPUHostLabelKey:      dpuHostLabelKey,
+			DPUHostLabelValue:    dpuHostLabelValue,
+			PrioritizeOffloading: prioritizeOffloading,
 		},
 	}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DPFOperatorConfig")
