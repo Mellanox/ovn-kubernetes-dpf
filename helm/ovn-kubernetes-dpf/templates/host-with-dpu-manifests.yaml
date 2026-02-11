@@ -1,4 +1,7 @@
 {{- if .Values.nodeWithDPUManifests.enabled }}
+{{- if and .Values.nodeWithDPUManifests.nodeMgmtPortNetdev .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}
+{{- fail "nodeWithDPUManifests.nodeMgmtPortNetdev and nodeWithDPUManifests.nodeMgmtPortDpResourceName are mutually exclusive, only one can be set" }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -159,6 +162,13 @@ spec:
           requests:
             cpu: 100m
             memory: 300Mi
+            {{- if .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}
+            {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}: "1"
+            {{- end }}
+          {{- if .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}
+          limits:
+            {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}: "1"
+          {{- end }}
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.2.0"
@@ -262,6 +272,8 @@ spec:
           value: "dpu-host"
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: {{ default "" .Values.nodeWithDPUManifests.nodeMgmtPortNetdev | quote }}
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: {{ default "" .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:
