@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"time"
 
+	provisioningv1 "github.com/nvidia/doca-platform/api/provisioning/v1alpha1"
 	"github.com/nvidia/doca-platform/pkg/utils/networkhelper"
 	"github.com/nvidia/ovn-kubernetes-components/internal/constants"
 	"github.com/nvidia/ovn-kubernetes-components/internal/utils/ovsclient"
@@ -244,9 +245,14 @@ func (p *DPUCNIProvisioner) findAndSetKubernetesHostNameInOVS() error {
 	if err != nil {
 		return fmt.Errorf("error while getting Kubernetes Node: %w", err)
 	}
-	hostName, ok := n.Labels[constants.HostNameDPULabelKey]
+	// use the dpuNodeName label which should match the hostname of the host that this DPU belongs to
+	hostName, ok := n.Labels[provisioningv1.DPUNodeNameLabel]
 	if !ok {
-		return fmt.Errorf("required label %s is not set on node %s in the DPU cluster", constants.HostNameDPULabelKey, p.dpuHostName)
+		// check old label for backward compatibility
+		hostName, ok = n.Labels[constants.HostNameDPULabelKey]
+		if !ok {
+			return fmt.Errorf("required label %s is not set on node %s in the DPU cluster", provisioningv1.DPUNodeNameLabel, p.dpuHostName)
+		}
 	}
 
 	if err := p.ovsClient.SetKubernetesHostNodeName(hostName); err != nil {
@@ -290,7 +296,7 @@ func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error
 	// which gets a DHCP IP in that CIDR. Given that, we need to set the metric of this route to something very high
 	// so that it's the last preferred route in the route table for that CIDR. The reason for that is this OVS bug that
 	// selects the route with the highest prio - see issue 3871067.
-	if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To[int](10000), nil); err != nil {
+	if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil); err != nil {
 		return fmt.Errorf("error while adding route %s %s %s: %w", p.hostCIDR, p.gateway.String(), brOVN, err)
 	}
 
@@ -489,7 +495,7 @@ func (p *DPUCNIProvisioner) startDHCPServer() error {
 		return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
 	}
 
-	mac, err := p.networkHelper.GetPFRepMACAddress("pf0hpf")
+	mac, err := p.networkHelper.GetHostPFMACAddressDPU("0")
 	if err != nil {
 		return fmt.Errorf("error while parsing MAC address of the PF on the host: %w", err)
 	}

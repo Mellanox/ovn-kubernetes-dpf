@@ -71,7 +71,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -115,7 +115,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-ovn", nil, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
 			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
-			networkhelper.EXPECT().GetPFRepMACAddress("pf0hpf").Return(mac, nil)
+			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
@@ -141,7 +141,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			_, err = kubernetesClient.CoreV1().Nodes().Patch(context.Background(), fakeNode.Name, types.ApplyPatchType, data, metav1.PatchOptions{
 				FieldManager: "somemanager",
-				Force:        ptr.To[bool](true),
+				Force:        ptr.To(true),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -181,7 +181,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -226,7 +226,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
 			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
-			networkhelper.EXPECT().GetPFRepMACAddress("pf0hpf").Return(mac, nil)
+			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
@@ -252,7 +252,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			_, err = kubernetesClient.CoreV1().Nodes().Patch(context.Background(), fakeNode.Name, types.ApplyPatchType, data, metav1.PatchOptions{
 				FieldManager: "somemanager",
-				Force:        ptr.To[bool](true),
+				Force:        ptr.To(true),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -283,7 +283,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -350,7 +350,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -381,7 +381,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
 			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
-			networkhelper.EXPECT().GetPFRepMACAddress("pf0hpf").Return(mac, nil)
+			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
@@ -444,7 +444,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -515,7 +515,7 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -552,7 +552,7 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 			gateway := net.ParseIP("192.168.1.254")
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
+			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To(10000), nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
@@ -618,7 +618,7 @@ network:
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -732,7 +732,7 @@ network:
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
 					Labels: map[string]string{
-						"provisioning.dpu.nvidia.com/host": "host1",
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
 					},
 				},
 			}
@@ -834,7 +834,7 @@ func networkHelperMockAll(networkHelper *networkhelperMock.MockNetworkHelper) {
 	networkHelper.EXPECT().AddRule(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().GetGateway(gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().GetLinkIPAddresses(gomock.Any()).AnyTimes()
-	networkHelper.EXPECT().GetPFRepMACAddress(gomock.Any()).AnyTimes()
+	networkHelper.EXPECT().GetHostPFMACAddressDPU(gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().LinkIPAddressExists(gomock.Any(), gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().RouteExists(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().RuleExists(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
