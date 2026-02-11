@@ -87,6 +87,16 @@ rules:
   - egressservices
   - adminpolicybasedexternalroutes
   verbs: [ "get", "list", "watch" ]
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - certificatesigningrequests
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+{{- end }}
 - apiGroups: [""]
   resources:
   - events
