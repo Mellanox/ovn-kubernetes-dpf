@@ -18,9 +18,15 @@ roleRef:
   kind: ClusterRole
   apiGroup: rbac.authorization.k8s.io
 subjects:
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- kind: Group
+  name: system:ovn-nodes
+  apiGroup: rbac.authorization.k8s.io
+{{- else }}
 - kind: ServiceAccount
   name: {{ include "ovn-kubernetes.fullname" . }}-node-dpu-host
   namespace: {{ .Release.Namespace }}
+{{- end }}
 - kind: ServiceAccount
   name: {{ .Values.nodeWithDPUManifests.dpuServiceAccountName }}
   namespace: {{ .Values.nodeWithDPUManifests.dpuServiceAccountNamespace }}
@@ -40,6 +46,45 @@ subjects:
 - kind: ServiceAccount
   name: {{ .Values.nodeWithDPUManifests.dpuServiceAccountName }}
   namespace: {{ .Values.nodeWithDPUManifests.dpuServiceAccountNamespace }}
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ovn-kubernetes.fullname" . }}-node-dpu-host-impersonator
+rules:
+- apiGroups: [""]
+  resources:
+  - users
+  verbs:
+  - impersonate
+- apiGroups: [""]
+  resources:
+  - groups
+  resourceNames:
+  - system:nodes
+  - system:authenticated
+  verbs:
+  - impersonate
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ovn-kubernetes.fullname" . }}-node-dpu-host-impersonator
+roleRef:
+  name: {{ include "ovn-kubernetes.fullname" . }}-node-dpu-host-impersonator
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.nodeWithDPUManifests.dpuServiceAccountName }}
+  namespace: {{ .Values.nodeWithDPUManifests.dpuServiceAccountNamespace }}
+{{- if ne (default "" .Values.dpuManifests.kubernetesSecretName) "" }}
+- kind: ServiceAccount
+  name: {{ .Values.dpuManifests.kubernetesSecretName }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -51,9 +96,15 @@ roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
 subjects:
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- kind: Group
+  name: system:ovn-nodes
+  apiGroup: rbac.authorization.k8s.io
+{{- else }}
 - kind: ServiceAccount
   name: {{ include "ovn-kubernetes.fullname" . }}-node-dpu-host
   namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -158,6 +209,9 @@ spec:
           mountPropagation: Bidirectional
         - mountPath: /var/run/ovn
           name: var-run-ovn
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -265,7 +319,7 @@ spec:
         - name: OVN_EX_GW_NETWORK_INTERFACE
           value: ""
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
-          value: "false"
+          value: {{ hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false | quote }}
         - name: OVN_ENABLE_INTERCONNECT
           value: "true"
         - name: OVNKUBE_NODE_MODE
@@ -322,6 +376,9 @@ spec:
           path: /var/run/netns
       - name: var-run-ovn
         emptyDir: {}
+      - name: ovnkube-config
+        configMap:
+          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       tolerations:
       - operator: "Exists"
 {{- end }}

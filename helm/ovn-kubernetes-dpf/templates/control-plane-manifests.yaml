@@ -207,6 +207,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -321,6 +324,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       tolerations:
       - operator: "Exists"
 {{- end }}

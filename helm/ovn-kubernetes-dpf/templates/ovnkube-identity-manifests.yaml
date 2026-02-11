@@ -1,0 +1,207 @@
+{{- $identityEnabled := hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false -}}
+{{- if and (eq $identityEnabled true) .Values.commonManifests.enabled .Values.controlPlaneManifests.enabled }}
+{{- $fullname := include "ovn-kubernetes.fullname" . -}}
+{{- $interconnectEnabled := hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect true -}}
+{{- $webhookSecretName := printf "%s-webhook-cert" $fullname -}}
+{{- $existingWebhookSecret := lookup "v1" "Secret" .Release.Namespace $webhookSecretName -}}
+{{- $caCrt := "" -}}
+{{- $tlsCrt := "" -}}
+{{- $tlsKey := "" -}}
+{{- if and $existingWebhookSecret (hasKey $existingWebhookSecret.data "ca.crt") (hasKey $existingWebhookSecret.data "tls.crt") (hasKey $existingWebhookSecret.data "tls.key") -}}
+{{- $caCrt = index $existingWebhookSecret.data "ca.crt" -}}
+{{- $tlsCrt = index $existingWebhookSecret.data "tls.crt" -}}
+{{- $tlsKey = index $existingWebhookSecret.data "tls.key" -}}
+{{- else -}}
+{{- $ca := genCA (printf "%s-self-signed-ca" $fullname) 400 -}}
+{{- $cert := genSignedCert "localhost" nil (list "localhost") 365 $ca -}}
+{{- $caCrt = $ca.Cert | b64enc -}}
+{{- $tlsCrt = $cert.Cert | b64enc -}}
+{{- $tlsKey = $cert.Key | b64enc -}}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-identity
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-identity
+roleRef:
+  name: {{ $fullname }}-identity
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: {{ $fullname }}-identity
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-identity-configmaps
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  name: {{ $fullname }}-configmaps
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: {{ $fullname }}-identity
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-identity
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - certificatesigningrequests
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - certificatesigningrequests/approval
+  verbs: ["update"]
+- apiGroups: [""]
+  resources:
+  - events
+  verbs: ["create", "patch", "update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - signers
+  resourceNames:
+  - kubernetes.io/kube-apiserver-client
+  verbs: ["approve"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $webhookSecretName }}
+  namespace: {{ .Release.Namespace }}
+data:
+  ca.crt: {{ $caCrt | quote }}
+  tls.crt: {{ $tlsCrt | quote }}
+  tls.key: {{ $tlsKey | quote }}
+type: kubernetes.io/tls
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}-admission-webhook-node
+webhooks:
+- name: {{ printf "%s-admission-webhook-node.k8s.io" $fullname }}
+  clientConfig:
+    url: https://localhost:9443/node
+    caBundle: {{ $caCrt | quote }}
+  admissionReviewVersions: ["v1"]
+  failurePolicy: Ignore
+  sideEffects: None
+  rules:
+  - operations: ["UPDATE"]
+    apiGroups: ["*"]
+    apiVersions: ["*"]
+    resources: ["nodes/status"]
+    scope: "*"
+{{- if eq $interconnectEnabled true }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}-admission-webhook-pod
+webhooks:
+- name: {{ printf "%s-admission-webhook-pod.k8s.io" $fullname }}
+  clientConfig:
+    url: https://localhost:9443/pod
+    caBundle: {{ $caCrt | quote }}
+  admissionReviewVersions: ["v1"]
+  failurePolicy: Ignore
+  sideEffects: None
+  rules:
+  - operations: ["UPDATE"]
+    apiGroups: ["*"]
+    apiVersions: ["*"]
+    resources: ["pods/status"]
+    scope: "*"
+{{- end }}
+---
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: {{ $fullname }}-identity
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/description: |
+      This DaemonSet launches the ovnkube-identity networking component on control-plane nodes.
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ovnkube-identity
+      {{- include "ovn-kubernetes.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 100%
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: ovnkube-identity
+        kubernetes.io/os: "linux"
+        ovn.dpu.nvidia.com/skip-injection: ""
+        {{- include "ovn-kubernetes.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.global.imagePullSecretName }}
+      imagePullSecrets:
+      - name: {{ .Values.global.imagePullSecretName }}
+      {{- end }}
+      priorityClassName: "system-cluster-critical"
+      serviceAccountName: {{ $fullname }}-identity
+      hostNetwork: true
+      dnsPolicy: Default
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+        kubernetes.io/os: "linux"
+      containers:
+      - name: ovnkube-identity
+        image: {{ .Values.controlPlaneManifests.image.repository }}:{{ .Values.controlPlaneManifests.image.tag }}
+        imagePullPolicy: {{ .Values.controlPlaneManifests.image.pullPolicy }}
+        command: ["/root/ovnkube.sh", "ovnkube-identity"]
+        securityContext:
+          runAsUser: 0
+        terminationMessagePolicy: FallbackToLogsOnError
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        volumeMounts:
+        - mountPath: /etc/webhook-cert/
+          name: webhook-cert
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: "1.2.0"
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ $fullname }}-config
+              key: k8s_apiserver
+        - name: OVNKUBE_LOGLEVEL
+          value: "4"
+        - name: OVN_ENABLE_INTERCONNECT
+          value: {{ $interconnectEnabled | quote }}
+        - name: OVN_HYBRID_OVERLAY_ENABLE
+          value: ""
+      volumes:
+      - name: webhook-cert
+        secret:
+          secretName: {{ $fullname }}-webhook-cert
+      tolerations:
+      - operator: "Exists"
+{{- end }}

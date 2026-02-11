@@ -15,9 +15,15 @@ roleRef:
   kind: ClusterRole
   apiGroup: rbac.authorization.k8s.io
 subjects:
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- kind: Group
+  name: system:ovn-nodes
+  apiGroup: rbac.authorization.k8s.io
+{{- else }}
 - kind: ServiceAccount
   name: {{ include "ovn-kubernetes.fullname" . }}-node
   namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -42,9 +48,15 @@ roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
 subjects:
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- kind: Group
+  name: system:ovn-nodes
+  apiGroup: rbac.authorization.k8s.io
+{{- else }}
 - kind: ServiceAccount
   name: {{ include "ovn-kubernetes.fullname" . }}-node
   namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -144,6 +156,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -200,6 +215,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -262,6 +280,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -331,6 +352,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
@@ -491,7 +515,7 @@ spec:
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: "false"
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
-          value: "false"
+          value: {{ hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false | quote }}
         - name: OVN_ENABLE_SVC_TEMPLATE_SUPPORT
           value: "false"
         - name: OVN_ENABLE_DNSNAMERESOLVER
@@ -525,6 +549,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -573,6 +600,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -646,6 +676,9 @@ spec:
       - name: host-var-lib-ovs
         hostPath:
           path: /var/lib/openvswitch
+      - name: ovnkube-config
+        configMap:
+          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       tolerations:
       - operator: "Exists"
 {{- end }}

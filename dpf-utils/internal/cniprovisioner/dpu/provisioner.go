@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	provisioningv1 "github.com/nvidia/doca-platform/api/provisioning/v1alpha1"
@@ -85,6 +86,10 @@ const (
 	// netplanApplyCooldownDuration determines the cooldown period of a successful netplan apply command before a
 	// subsequent netplan apply command is executed.
 	netplanApplyCooldownDuration = time.Minute * 2
+	// hostBootstrapKubeconfigPath is the path where bootstrap kubeconfig is written for ovnkube identity.
+	hostBootstrapKubeconfigPath = "/host-kubernetes/kubelet.conf"
+	// hostNodeNameFilePath is the path used to publish mapped host node name for other containers in the pod.
+	hostNodeNameFilePath = "/var/run/ovn-kubernetes/host-node-name"
 )
 
 type DPUCNIProvisioner struct {
@@ -99,6 +104,13 @@ type DPUCNIProvisioner struct {
 	// FileSystemRoot controls the file system root. It's used for enabling easier testing of the package. Defaults to
 	// empty.
 	FileSystemRoot string
+	// K8sAPIServer is the host cluster API server endpoint used in the generated bootstrap kubeconfig.
+	// Leave empty to skip bootstrap kubeconfig generation.
+	K8sAPIServer string
+	// BootstrapKubeconfigPath is where the bootstrap kubeconfig is written. Defaults to hostBootstrapKubeconfigPath.
+	BootstrapKubeconfigPath string
+	// HostNodeNameFilePath is where the mapped host node name is written. Defaults to hostNodeNameFilePath.
+	HostNodeNameFilePath string
 
 	// vtepIPNet is the IP that should be added to the VTEP interface.
 	vtepIPNet *net.IPNet
@@ -155,6 +167,9 @@ func New(ctx context.Context,
 		exec:                      exec,
 		kubernetesClient:          kubernetesClient,
 		FileSystemRoot:            "",
+		K8sAPIServer:              "",
+		BootstrapKubeconfigPath:   hostBootstrapKubeconfigPath,
+		HostNodeNameFilePath:      hostNodeNameFilePath,
 		vtepIPNet:                 vtepIPNet,
 		gateway:                   gateway,
 		vtepCIDR:                  vtepCIDR,
@@ -209,8 +224,12 @@ func (p *DPUCNIProvisioner) EnsureConfiguration() {
 // configure runs the provisioning flow once
 func (p *DPUCNIProvisioner) configure() error {
 	klog.Info("Configuring Kubernetes host name in OVS")
-	if err := p.findAndSetKubernetesHostNameInOVS(); err != nil {
+	hostName, err := p.findAndSetKubernetesHostNameInOVS()
+	if err != nil {
 		return fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
+	}
+	if err := p.writeHostIdentityBootstrapArtifacts(hostName); err != nil {
+		return fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
 	}
 
 	if p.mode == ExternalIPAM {
@@ -239,27 +258,90 @@ func (p *DPUCNIProvisioner) configure() error {
 }
 
 // findAndSetKubernetesHostNameInOVS discovers and sets the Kubernetes Host Name in OVS
-func (p *DPUCNIProvisioner) findAndSetKubernetesHostNameInOVS() error {
+func (p *DPUCNIProvisioner) findAndSetKubernetesHostNameInOVS() (string, error) {
 	nodeClient := p.kubernetesClient.CoreV1().Nodes()
 	n, err := nodeClient.Get(p.ctx, p.dpuHostName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("error while getting Kubernetes Node: %w", err)
+		return "", fmt.Errorf("error while getting Kubernetes Node: %w", err)
 	}
-	// use the dpuNodeName label which should match the hostname of the host that this DPU belongs to
+	// Use the dpuNodeName label (new API) which should match the hostname of the host
+	// that this DPU belongs to. Fall back to the legacy label for compatibility.
 	hostName, ok := n.Labels[provisioningv1.DPUNodeNameLabel]
+	labelKey := provisioningv1.DPUNodeNameLabel
 	if !ok {
-		// check old label for backward compatibility
 		hostName, ok = n.Labels[constants.HostNameDPULabelKey]
+		labelKey = constants.HostNameDPULabelKey
 		if !ok {
-			return fmt.Errorf("required label %s is not set on node %s in the DPU cluster", provisioningv1.DPUNodeNameLabel, p.dpuHostName)
+			return "", fmt.Errorf("required label %s is not set on node %s in the DPU cluster", provisioningv1.DPUNodeNameLabel, p.dpuHostName)
 		}
+	}
+	hostName = strings.TrimSpace(hostName)
+	if hostName == "" {
+		return "", fmt.Errorf("label %s on node %s cannot be empty", labelKey, p.dpuHostName)
 	}
 
 	if err := p.ovsClient.SetKubernetesHostNodeName(hostName); err != nil {
-		return fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
+		return "", fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
 	}
 	if err := p.ovsClient.SetHostName(hostName); err != nil {
-		return fmt.Errorf("error while setting the hostname external ID in OVS: %w", err)
+		return "", fmt.Errorf("error while setting the hostname external ID in OVS: %w", err)
+	}
+	return hostName, nil
+}
+
+// writeHostIdentityBootstrapArtifacts writes host identity data for other pod containers.
+// It writes artifacts only when K8sAPIServer is set, which enables the bootstrap flow.
+func (p *DPUCNIProvisioner) writeHostIdentityBootstrapArtifacts(hostName string) error {
+	if strings.TrimSpace(p.K8sAPIServer) == "" {
+		return nil
+	}
+
+	hostNodeNamePath := p.HostNodeNameFilePath
+	if hostNodeNamePath == "" {
+		hostNodeNamePath = hostNodeNameFilePath
+	}
+	hostNodeNamePath = filepath.Join(p.FileSystemRoot, hostNodeNamePath)
+	if err := os.MkdirAll(filepath.Dir(hostNodeNamePath), 0755); err != nil {
+		return fmt.Errorf("error while creating directory for host node name file %s: %w", hostNodeNamePath, err)
+	}
+	if err := os.WriteFile(hostNodeNamePath, []byte(hostName+"\n"), 0644); err != nil {
+		return fmt.Errorf("error while writing host node name file %s: %w", hostNodeNamePath, err)
+	}
+
+	bootstrapPath := p.BootstrapKubeconfigPath
+	if bootstrapPath == "" {
+		bootstrapPath = hostBootstrapKubeconfigPath
+	}
+	bootstrapPath = filepath.Join(p.FileSystemRoot, bootstrapPath)
+	if err := os.MkdirAll(filepath.Dir(bootstrapPath), 0700); err != nil {
+		return fmt.Errorf("error while creating directory for bootstrap kubeconfig %s: %w", bootstrapPath, err)
+	}
+
+	bootstrapKubeconfig := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    server: %s
+  name: host-cluster
+contexts:
+- context:
+    cluster: host-cluster
+    user: ovn-dpu-bootstrap
+  name: ovn-dpu-bootstrap
+current-context: ovn-dpu-bootstrap
+users:
+- name: ovn-dpu-bootstrap
+  user:
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    as: system:node:%s
+    as-groups:
+    - system:nodes
+    - system:authenticated
+`, strings.TrimSpace(p.K8sAPIServer), hostName)
+
+	if err := os.WriteFile(bootstrapPath, []byte(bootstrapKubeconfig), 0600); err != nil {
+		return fmt.Errorf("error while writing bootstrap kubeconfig %s: %w", bootstrapPath, err)
 	}
 	return nil
 }
