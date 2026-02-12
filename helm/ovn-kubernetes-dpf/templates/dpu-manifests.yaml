@@ -190,55 +190,6 @@ spec:
       automountServiceAccountToken: false
       # DPU CNI provisioner
       initContainers:
-      {{- if $useSecretBootstrap }}
-      - name: ovnkube-bootstrap-kubeconfig
-        image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
-        imagePullPolicy: {{ .Values.dpuManifests.image.pullPolicy }}
-        command:
-        - /bin/sh
-        - -ec
-        - |
-          cat <<EOF >/host-kubernetes/kubelet.conf
-          apiVersion: v1
-          kind: Config
-          clusters:
-          - cluster:
-              certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              server: ${K8S_APISERVER}
-            name: host-cluster
-          contexts:
-          - context:
-              cluster: host-cluster
-              user: ovn-dpu-bootstrap
-            name: ovn-dpu-bootstrap
-          current-context: ovn-dpu-bootstrap
-          users:
-          - name: ovn-dpu-bootstrap
-            user:
-              tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-              as: system:node:${K8S_NODE_DPU%%-mt*}
-              as-groups:
-              - system:nodes
-              - system:authenticated
-          EOF
-          chmod 0600 /host-kubernetes/kubelet.conf
-        env:
-        - name: K8S_NODE_DPU
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: K8S_APISERVER
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "ovn-kubernetes.fullname" . }}-config
-              key: k8s_apiserver
-        volumeMounts:
-        - mountPath: /host-kubernetes
-          name: host-kubeconfig
-        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
-          name: tenant-cluster-access-secret
-          readOnly: true
-      {{- end }}
       {{- if not .Values.dpuManifests.externalDHCP }}
       - name: ipallocator
         image: {{ .Values.dpuManifests.imagedpf.repository }}:{{ .Values.dpuManifests.imagedpf.tag }}
@@ -337,6 +288,13 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        {{- if $useSecretBootstrap }}
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ovn-kubernetes.fullname" . }}-config
+              key: k8s_apiserver
+        {{- end }}
         {{- if .Values.dpuManifests.externalDHCP }}
         # Needed so that systemctl can run inside the container
         - name: SYSTEMCTL_FORCE_BUS
@@ -390,6 +348,12 @@ spec:
           readOnly: true
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
+        {{- if $useSecretBootstrap }}
+        - mountPath: /host-kubernetes
+          name: host-kubeconfig
+        {{- end }}
       containers:
       - name: nb-ovsdb
         image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
@@ -568,7 +532,10 @@ spec:
         - /bin/sh
         - -ec
         - |
-          export K8S_NODE_DPU="${K8S_NODE_DPU%%-mt*}"
+          host_node_name_file=/var/run/ovn-kubernetes/host-node-name
+          if [ -s "${host_node_name_file}" ]; then
+            export K8S_NODE_DPU="$(tr -d '[:space:]' < "${host_node_name_file}")"
+          fi
           exec /root/ovnkube.sh ovnkube-controller-with-node
         securityContext:
           runAsUser: 0
@@ -802,7 +769,10 @@ spec:
         - /bin/sh
         - -ec
         - |
-          export K8S_NODE_DPU="${K8S_NODE_DPU%%-mt*}"
+          host_node_name_file=/var/run/ovn-kubernetes/host-node-name
+          if [ -s "${host_node_name_file}" ]; then
+            export K8S_NODE_DPU="$(tr -d '[:space:]' < "${host_node_name_file}")"
+          fi
           exec /root/ovnkube.sh ovn-controller
         securityContext:
           runAsUser: 0
@@ -821,6 +791,8 @@ spec:
           name: host-var-run-ovs
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true

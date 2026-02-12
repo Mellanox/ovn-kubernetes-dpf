@@ -128,6 +128,7 @@ func main() {
 	}
 
 	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
+	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
 
 	err = provisioner.RunOnce()
 	if err != nil {
