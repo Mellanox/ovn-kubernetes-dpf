@@ -377,7 +377,7 @@ spec:
           name: host-ovn-cert
           readOnly: true
         - mountPath: /run/ovnkube-config
-          name: ovnkube-config
+          name: init-output
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -390,6 +390,8 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: {{ .Values.ovnDaemonsetVersion | quote }}
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_NB
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -437,7 +439,7 @@ spec:
           name: host-ovn-cert
           readOnly: true
         - mountPath: /run/ovnkube-config
-          name: ovnkube-config
+          name: init-output
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -450,6 +452,8 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: {{ .Values.ovnDaemonsetVersion | quote }}
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_SB
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -502,7 +506,7 @@ spec:
           name: host-ovn-cert
           readOnly: true
         - mountPath: /run/ovnkube-config
-          name: ovnkube-config
+          name: init-output
           readOnly: true
         resources:
           requests:
@@ -511,6 +515,8 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: {{ .Values.ovnDaemonsetVersion | quote }}
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_NORTHD
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -602,7 +608,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_EGRESSSERVICE_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_DAEMONSET_VERSION
           value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: OVNKUBE_LOGLEVEL
@@ -690,16 +696,18 @@ spec:
           value: {{ default "" .Values.gatewayOpts | quote }}
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: ""
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableAdminNetworkPolicy | quote }}
         - name: OVN_EGRESSIP_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableEgressIP | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
-          value: "9107"
+          value: {{ default "" .Values.global.egressIpHealthCheckPort | quote }}
         - name: OVN_EGRESSFIREWALL_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableEgressFirewall | quote }}
         - name: OVN_EGRESSQOS_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableEgressQoS | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -752,8 +760,12 @@ spec:
           value: ""
         - name: OVN_LFLOW_CACHE_LIMIT_KB
           value: ""
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
-          value: "{{ .Values.dpuManifests.ovnMultiNetworkEnable | default "true" }}"
+          value: {{ default "" .Values.global.enableMultiNetwork | quote }}
+        - name: OVN_MULTI_NETWORK_POLICY_ENABLE
+          value: {{ default "" .Values.global.enableMultiNetworkPolicy | quote }}
         - name: OVN_EMPTY_LB_EVENTS
           value: ""
         - name: OVN_ACL_LOGGING_RATE_LIMIT
@@ -834,7 +846,7 @@ spec:
           name: host-ovn-cert
           readOnly: true
         - mountPath: /run/ovnkube-config
-          name: ovnkube-config
+          name: init-output
           readOnly: true
         resources:
           requests:
@@ -843,6 +855,8 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: {{ .Values.ovnDaemonsetVersion | quote }}
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: "-vconsole:info"
         - name: K8S_APISERVER
@@ -888,7 +902,7 @@ spec:
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
         - mountPath: /run/ovnkube-config
-          name: ovnkube-config
+          name: init-output
           readOnly: true
         resources:
           requests:
@@ -897,6 +911,8 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: {{ .Values.ovnDaemonsetVersion | quote }}
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -988,9 +1004,6 @@ spec:
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
-      - name: ovnkube-config
-        configMap:
-          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       - name: tenant-cluster-access-secret
         secret:
           defaultMode: 420
