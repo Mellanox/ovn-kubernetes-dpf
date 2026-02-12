@@ -82,6 +82,22 @@ mtu: 1400
 global:
   # -- The name of the secret used to pull images. Applies to all relevant manifests.
   imagePullSecretName: ""
+  # -- Configure to enable no-overlay mode for the default network
+  enableNoOverlay: false
+  # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
+  enableNetworkSegmentation: ""
+  # -- Configure to enable Egress IP feature
+  enableEgressIP: ""
+  # -- Configure to enable Egress Service feature
+  enableEgressService: ""
+  # -- Configure to enable Egress Firewall feature
+  enableEgressFirewall: ""
+  # -- Configure to enable Egress QoS feature
+  enableEgressQoS: ""
+  # -- Configure to enable Multi-Network feature
+  enableMultiNetwork: ""
+  # -- Configure to enable Multi-Network Policy feature
+  enableMultiNetworkPolicy: ""
 
 # -- Variables related to common manifests used by components in both DPU and Host cluster
 commonManifests:
