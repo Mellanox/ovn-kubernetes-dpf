@@ -12,6 +12,23 @@ data:
   mtu:           {{ .Values.mtu | quote }}
   host_network_namespace: "ovn-host-network"
 ---
+# ovnkube-config ConfigMap
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
+  namespace: {{ .Release.Namespace }}
+data:
+  ovnkube.conf: |
+{{- if .Values.global.enableNoOverlay }}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+    outbound-snat = disabled
+    routing = unmanaged
+{{- end }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
