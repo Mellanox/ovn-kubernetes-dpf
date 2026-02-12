@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
 	url = git@github.com:Mellanox/ovn-kubernetes.git
-	branch = hpc_ovnk_upstream
+	branch = main

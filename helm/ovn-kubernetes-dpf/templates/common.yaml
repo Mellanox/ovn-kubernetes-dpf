@@ -12,6 +12,7 @@ data:
   mtu:           {{ .Values.mtu | quote }}
   host_network_namespace: "ovn-host-network"
 ---
+# ovnkube-config ConfigMap
 kind: ConfigMap
 apiVersion: v1
 metadata:
@@ -21,6 +22,14 @@ data:
   # Upstream ovnkube.sh now passes --config-file=/run/ovnkube-config/ovnkube.conf.
   # Keep this file present even when no explicit overrides are set.
   ovnkube.conf: |
+{{- if .Values.global.enableNoOverlay }}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+    outbound-snat = disabled
+    routing = unmanaged
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -78,6 +87,7 @@ rules:
   - egressfirewalls/status
   - adminpolicybasedexternalroutes/status
   - egressqoses/status
+  - networkqoses/status
   verbs: [ "patch", "update" ]
 - apiGroups: ["policy.networking.k8s.io"]
   resources:
@@ -96,6 +106,9 @@ rules:
   - egressqoses
   - egressservices
   - adminpolicybasedexternalroutes
+  - userdefinednetworks
+  - clusteruserdefinednetworks
+  - networkqoses
   verbs: [ "get", "list", "watch" ]
 {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
 - apiGroups: ["certificates.k8s.io"]
