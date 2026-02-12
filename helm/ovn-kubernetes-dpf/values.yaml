@@ -101,6 +101,22 @@ global:
   imagePullSecretName: ""
   # -- Enable OVN kube node identity feature (per-node cert + admission webhook).
   enableOvnKubeIdentity: true
+  # -- Configure to enable no-overlay mode for the default network
+  enableNoOverlay: false
+  # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
+  enableNetworkSegmentation: ""
+  # -- Configure to enable Egress IP feature
+  enableEgressIP: ""
+  # -- Configure to enable Egress Service feature
+  enableEgressService: ""
+  # -- Configure to enable Egress Firewall feature
+  enableEgressFirewall: ""
+  # -- Configure to enable Egress QoS feature
+  enableEgressQoS: ""
+  # -- Configure to enable Multi-Network feature
+  enableMultiNetwork: ""
+  # -- Configure to enable Multi-Network Policy feature
+  enableMultiNetworkPolicy: ""
 
 # -- Variables related to common manifests used by components in both DPU and Host cluster
 commonManifests:
