@@ -376,6 +376,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -432,6 +435,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -494,6 +500,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -572,6 +581,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
@@ -796,6 +808,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -847,6 +862,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -945,6 +963,9 @@ spec:
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
+      - name: ovnkube-config
+        configMap:
+          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       - name: tenant-cluster-access-secret
         secret:
           defaultMode: 420

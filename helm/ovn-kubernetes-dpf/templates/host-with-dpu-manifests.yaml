@@ -209,6 +209,9 @@ spec:
           mountPropagation: Bidirectional
         - mountPath: /var/run/ovn
           name: var-run-ovn
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -373,6 +376,9 @@ spec:
           path: /var/run/netns
       - name: var-run-ovn
         emptyDir: {}
+      - name: ovnkube-config
+        configMap:
+          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       tolerations:
       - operator: "Exists"
 {{- end }}
