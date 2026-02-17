@@ -57,6 +57,11 @@ dpuManifests:
   cniBinDir: "/opt/cni/bin"
   cniConfDir: "/etc/cni/net.d"
   ovnDisableRequestedchassis: false # Enable/disable requested-chassis option on lsp
+  hostClusterCredentials:
+    token: ""
+    tokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    caCertData: ""
+    caCert: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 # -- Variables related to manifests that are needed to setup the OVN Control Plane
 controlPlaneManifests:
