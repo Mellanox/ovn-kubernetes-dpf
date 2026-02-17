@@ -2,8 +2,22 @@
 {{- if and (eq $identityEnabled true) .Values.commonManifests.enabled .Values.controlPlaneManifests.enabled }}
 {{- $fullname := include "ovn-kubernetes.fullname" . -}}
 {{- $interconnectEnabled := hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect true -}}
-{{- $ca := genCA (printf "%s-self-signed-ca" $fullname) 400 }}
-{{- $cert := genSignedCert "localhost" nil (list "localhost") 365 $ca }}
+{{- $webhookSecretName := printf "%s-webhook-cert" $fullname -}}
+{{- $existingWebhookSecret := lookup "v1" "Secret" .Release.Namespace $webhookSecretName -}}
+{{- $caCrt := "" -}}
+{{- $tlsCrt := "" -}}
+{{- $tlsKey := "" -}}
+{{- if and $existingWebhookSecret (hasKey $existingWebhookSecret.data "ca.crt") (hasKey $existingWebhookSecret.data "tls.crt") (hasKey $existingWebhookSecret.data "tls.key") -}}
+{{- $caCrt = index $existingWebhookSecret.data "ca.crt" -}}
+{{- $tlsCrt = index $existingWebhookSecret.data "tls.crt" -}}
+{{- $tlsKey = index $existingWebhookSecret.data "tls.key" -}}
+{{- else -}}
+{{- $ca := genCA (printf "%s-self-signed-ca" $fullname) 400 -}}
+{{- $cert := genSignedCert "localhost" nil (list "localhost") 365 $ca -}}
+{{- $caCrt = $ca.Cert | b64enc -}}
+{{- $tlsCrt = $cert.Cert | b64enc -}}
+{{- $tlsKey = $cert.Key | b64enc -}}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -69,11 +83,12 @@ rules:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ $fullname }}-webhook-cert
+  name: {{ $webhookSecretName }}
   namespace: {{ .Release.Namespace }}
 data:
-  tls.crt: {{ $cert.Cert | b64enc | quote }}
-  tls.key: {{ $cert.Key | b64enc | quote }}
+  ca.crt: {{ $caCrt | quote }}
+  tls.crt: {{ $tlsCrt | quote }}
+  tls.key: {{ $tlsKey | quote }}
 type: kubernetes.io/tls
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -84,8 +99,9 @@ webhooks:
 - name: {{ printf "%s-admission-webhook-node.k8s.io" $fullname }}
   clientConfig:
     url: https://localhost:9443/node
-    caBundle: {{ $ca.Cert | b64enc | quote }}
+    caBundle: {{ $caCrt | quote }}
   admissionReviewVersions: ["v1"]
+  failurePolicy: Ignore
   sideEffects: None
   rules:
   - operations: ["UPDATE"]
@@ -103,8 +119,9 @@ webhooks:
 - name: {{ printf "%s-admission-webhook-pod.k8s.io" $fullname }}
   clientConfig:
     url: https://localhost:9443/pod
-    caBundle: {{ $ca.Cert | b64enc | quote }}
+    caBundle: {{ $caCrt | quote }}
   admissionReviewVersions: ["v1"]
+  failurePolicy: Ignore
   sideEffects: None
   rules:
   - operations: ["UPDATE"]

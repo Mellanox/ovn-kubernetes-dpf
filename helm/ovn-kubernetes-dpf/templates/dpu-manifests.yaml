@@ -637,11 +637,24 @@ spec:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
         - name: K8S_TOKEN
-          value: {{ default "" .Values.dpuManifests.hostClusterCredentials.token | quote }}
+{{- if ne (default "" .Values.dpuManifests.hostClusterCredentials.token) "" }}
+          value: {{ .Values.dpuManifests.hostClusterCredentials.token | quote }}
+{{- else if ne (default "" .Values.dpuManifests.kubernetesSecretName) "" }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.dpuManifests.kubernetesSecretName }}
+              key: TOKEN_FILE
+{{- else }}
+          value: ""
+{{- end }}
         - name: K8S_TOKEN_FILE
           value: {{ default "/var/run/secrets/kubernetes.io/serviceaccount/token" .Values.dpuManifests.hostClusterCredentials.tokenFile | quote }}
         - name: K8S_CACERT_DATA
-          value: {{ default "" .Values.dpuManifests.hostClusterCredentials.caCertData | quote }}
+{{- if ne (default "" .Values.dpuManifests.hostClusterCredentials.caCertData) "" }}
+          value: {{ .Values.dpuManifests.hostClusterCredentials.caCertData | quote }}
+{{- else }}
+          value: ""
+{{- end }}
         - name: K8S_CACERT
           value: {{ default "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" .Values.dpuManifests.hostClusterCredentials.caCert | quote }}
         - name: OVN_MTU
