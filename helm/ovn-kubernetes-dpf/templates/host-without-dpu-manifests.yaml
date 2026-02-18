@@ -411,11 +411,11 @@ spec:
         - name: OVN_NO_OVERLAY_ENABLE
           value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableAdminNetworkPolicy | quote }}
         - name: OVN_EGRESSIP_ENABLE
           value: {{ default "" .Values.global.enableEgressIP | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
-          value: "9107"
+          value: {{ default "" .Values.global.egressIpHealthCheckPort | quote }}
         - name: OVN_EGRESSFIREWALL_ENABLE
           value: {{ default "" .Values.global.enableEgressFirewall | quote }}
         - name: OVN_EGRESSQOS_ENABLE
@@ -472,6 +472,8 @@ spec:
           value: ""
         - name: OVN_LFLOW_CACHE_LIMIT_KB
           value: ""
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
           value: {{ default "" .Values.global.enableMultiNetwork | quote }}
         - name: OVN_MULTI_NETWORK_POLICY_ENABLE

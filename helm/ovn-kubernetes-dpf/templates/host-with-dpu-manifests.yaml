@@ -156,6 +156,13 @@ spec:
         - mountPath: /var/run/netns
           name: host-netns
           mountPropagation: Bidirectional
+        - mountPath: /run/systemd/private
+          name: run-systemd
+          subPath: private
+          readOnly: true
+        - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
+          name: host-devinfo-dp
+          readOnly: true
         - mountPath: /var/run/ovn
           name: var-run-ovn
         - mountPath: /run/ovnkube-config
@@ -166,11 +173,11 @@ spec:
             cpu: 100m
             memory: 300Mi
             {{- if .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}
-            {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}: "1"
+            {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}: {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceCount | quote }}
             {{- end }}
           {{- if .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}
           limits:
-            {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}: "1"
+            {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceName }}: {{ .Values.nodeWithDPUManifests.nodeMgmtPortDpResourceCount | quote }}
           {{- end }}
         env:
         - name: OVN_DAEMONSET_VERSION
@@ -226,11 +233,11 @@ spec:
         - name: OVN_NO_OVERLAY_ENABLE
           value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
-          value: ""
+          value: {{ default "" .Values.global.enableAdminNetworkPolicy | quote }}
         - name: OVN_EGRESSIP_ENABLE
           value: {{ default "" .Values.global.enableEgressIP | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
-          value: "9107"
+          value: {{ default "" .Values.global.egressIpHealthCheckPort | quote }}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_EGRESSFIREWALL_ENABLE
@@ -335,6 +342,12 @@ spec:
       - name: host-netns
         hostPath:
           path: /var/run/netns
+      - name: run-systemd
+        hostPath:
+          path: /run/systemd
+      - name: host-devinfo-dp
+        hostPath:
+          path: /var/run/k8s.cni.cncf.io/devinfo/dp
       - name: var-run-ovn
         emptyDir: {}
       - name: ovnkube-config

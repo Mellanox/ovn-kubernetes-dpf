@@ -32,6 +32,9 @@ nodeWithDPUManifests:
   nodeMgmtPortNetdev: ""
   # -- Node management port device plugin resource name. Mutually exclusive with nodeMgmtPortNetdev.
   nodeMgmtPortDpResourceName: ""
+  # -- Number of devices to request for the management port device plugin resource.
+  # With network segmentation (UDN), you need 1 for the default network plus 1 per primary UDN.
+  nodeMgmtPortDpResourceCount: 1
   dpuServiceAccountName: ovn-dpu
   dpuServiceAccountNamespace: ovn-kubernetes
   cniBinDir: "/opt/cni/bin"
@@ -108,6 +111,10 @@ global:
   enableMultiNetwork: ""
   # -- Configure to enable Multi-Network Policy feature
   enableMultiNetworkPolicy: ""
+  # -- Configure to enable Admin Network Policy feature
+  enableAdminNetworkPolicy: ""
+  # -- EgressIP health check port. Default is 9107 (gRPC). Set to 9 for legacy DISCARD port.
+  egressIpHealthCheckPort: "9107"
 
 # -- Variables related to common manifests used by components in both DPU and Host cluster
 commonManifests:
