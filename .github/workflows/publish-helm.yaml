@@ -43,23 +43,18 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG=${GITHUB_REF#refs/tags/}
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG=v0.1.0-latest
           else
-            TAG=v25.7.1-${GITHUB_SHA::7}
+            TAG=v0.1.0-${GITHUB_SHA::8}-test
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
       
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
       
-      - name: Build Helm chart
-        if: github.event_name == 'pull_request'
-        run: |
-          make helm-build TAG=${{ steps.tag.outputs.tag }} REGISTRY=ghcr.io/mellanox
-      
       - name: Build and publish Helm chart
-        if: github.event_name != 'pull_request'
         run: |
           make helm-publish TAG=${{ steps.tag.outputs.tag }} REGISTRY=ghcr.io/mellanox
 
