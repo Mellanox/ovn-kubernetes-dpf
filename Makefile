@@ -37,6 +37,21 @@ help: ## Display this help.
 REGISTRY ?= example.com
 OVNKUBERNETES_IMAGE ?= $(REGISTRY)/ovn-kubernetes-dpf
 DPF_UTILS_IMAGE ?= $(REGISTRY)/ovn-kubernetes-dpf-utils
+MULTIARCH_PLATFORMS ?= linux/amd64,linux/arm64
+DOCKER_BUILDX_BUILDER ?= ovn-kubernetes-dpf-builder
+DOCKER_BUILD_PROGRESS ?= plain
+DOCKER_BUILD_PROVENANCE ?= false
+DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+FULL_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+PROJECT_REPO ?= https://github.com/Mellanox/ovn-kubernetes-dpf
+
+.PHONY: docker-buildx-setup
+docker-buildx-setup: ## Ensure a buildx builder exists and is selected
+	@if ! docker buildx inspect $(DOCKER_BUILDX_BUILDER) >/dev/null 2>&1; then \
+		docker buildx create --name $(DOCKER_BUILDX_BUILDER) --driver docker-container --use >/dev/null; \
+	else \
+		docker buildx use $(DOCKER_BUILDX_BUILDER) >/dev/null 2>&1 || true; \
+	fi
 
 .PHONY: docker-build-ubuntu
 docker-build-ubuntu:
@@ -45,6 +60,22 @@ docker-build-ubuntu:
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		-t $(OVNKUBERNETES_IMAGE):$(TAG) \
 		--load \
+		-f Dockerfile.ovn-kubernetes.ubuntu .
+
+.PHONY: docker-build-ubuntu-multiarch
+docker-build-ubuntu-multiarch: docker-buildx-setup ## Build and push multi-arch Ubuntu image (amd64+arm64)
+	docker buildx build \
+		--platform $(MULTIARCH_PLATFORMS) \
+		--provenance=$(DOCKER_BUILD_PROVENANCE) \
+		--progress=$(DOCKER_BUILD_PROGRESS) \
+		--label org.opencontainers.image.created=$(DATE) \
+		--label org.opencontainers.image.revision=$(FULL_COMMIT) \
+		--label org.opencontainers.image.source=$(PROJECT_REPO) \
+		--label org.opencontainers.image.version=$(TAG) \
+		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
+		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		-t $(OVNKUBERNETES_IMAGE):$(TAG) \
+		--push \
 		-f Dockerfile.ovn-kubernetes.ubuntu .
 
 .PHONY: docker-build-fedora
@@ -56,6 +87,22 @@ docker-build-fedora:
 		--load \
 		-f Dockerfile.ovn-kubernetes.fedora .
 
+.PHONY: docker-build-fedora-multiarch
+docker-build-fedora-multiarch: docker-buildx-setup ## Build and push multi-arch Fedora image (amd64+arm64)
+	docker buildx build \
+		--platform $(MULTIARCH_PLATFORMS) \
+		--provenance=$(DOCKER_BUILD_PROVENANCE) \
+		--progress=$(DOCKER_BUILD_PROGRESS) \
+		--label org.opencontainers.image.created=$(DATE) \
+		--label org.opencontainers.image.revision=$(FULL_COMMIT) \
+		--label org.opencontainers.image.source=$(PROJECT_REPO) \
+		--label org.opencontainers.image.version=$(TAG) \
+		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
+		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		-t $(OVNKUBERNETES_IMAGE):$(TAG)-fedora \
+		--push \
+		-f Dockerfile.ovn-kubernetes.fedora .
+
 .PHONY: docker-build-dpf-utils
 docker-build-dpf-utils: ## Build DPF utilities image
 	docker buildx build \
@@ -64,6 +111,25 @@ docker-build-dpf-utils: ## Build DPF utilities image
 		--load \
 		-f dpf-utils/Dockerfile \
 		dpf-utils/
+
+.PHONY: docker-build-dpf-utils-multiarch
+docker-build-dpf-utils-multiarch: docker-buildx-setup ## Build and push multi-arch DPF utilities image (amd64+arm64)
+	docker buildx build \
+		--platform $(MULTIARCH_PLATFORMS) \
+		--provenance=$(DOCKER_BUILD_PROVENANCE) \
+		--progress=$(DOCKER_BUILD_PROGRESS) \
+		--label org.opencontainers.image.created=$(DATE) \
+		--label org.opencontainers.image.revision=$(FULL_COMMIT) \
+		--label org.opencontainers.image.source=$(PROJECT_REPO) \
+		--label org.opencontainers.image.version=$(TAG) \
+		--build-arg builder_image=${GO_IMAGE} \
+		-t $(DPF_UTILS_IMAGE):$(TAG) \
+		--push \
+		-f dpf-utils/Dockerfile \
+		dpf-utils/
+
+.PHONY: docker-build-multiarch
+docker-build-multiarch: docker-build-ubuntu-multiarch docker-build-fedora-multiarch docker-build-dpf-utils-multiarch ## Build and push all multi-arch images
 
 .PHONY: docker-push-ubuntu
 docker-push-ubuntu: ## Push Ubuntu image to registry
