@@ -12,6 +12,16 @@ data:
   mtu:           {{ .Values.mtu | quote }}
   host_network_namespace: "ovn-host-network"
 ---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
+  namespace: {{ .Release.Namespace }}
+data:
+  # Upstream ovnkube.sh now passes --config-file=/run/ovnkube-config/ovnkube.conf.
+  # Keep this file present even when no explicit overrides are set.
+  ovnkube.conf: |
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -87,6 +97,16 @@ rules:
   - egressservices
   - adminpolicybasedexternalroutes
   verbs: [ "get", "list", "watch" ]
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - certificatesigningrequests
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+{{- end }}
 - apiGroups: [""]
   resources:
   - events

@@ -1,3 +1,5 @@
+{{- $identityEnabled := hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false -}}
+{{- $useSecretBootstrap := and $identityEnabled (ne (default "" .Values.dpuManifests.kubernetesSecretName) "") -}}
 {{- if .Values.dpuManifests.enabled }}
 ---
 apiVersion: v1
@@ -53,9 +55,15 @@ roleRef:
   kind: ClusterRole
   apiGroup: rbac.authorization.k8s.io
 subjects:
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- kind: Group
+  name: system:ovn-nodes
+  apiGroup: rbac.authorization.k8s.io
+{{- else }}
 - kind: ServiceAccount
   name: {{ include "ovn-kubernetes.fullname" . }}-node
   namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -80,9 +88,15 @@ roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
 subjects:
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false) true }}
+- kind: Group
+  name: system:ovn-nodes
+  apiGroup: rbac.authorization.k8s.io
+{{- else }}
 - kind: ServiceAccount
   name: {{ include "ovn-kubernetes.fullname" . }}-node
   namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -274,6 +288,13 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        {{- if $useSecretBootstrap }}
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ovn-kubernetes.fullname" . }}-config
+              key: k8s_apiserver
+        {{- end }}
         {{- if .Values.dpuManifests.externalDHCP }}
         # Needed so that systemctl can run inside the container
         - name: SYSTEMCTL_FORCE_BUS
@@ -327,6 +348,12 @@ spec:
           readOnly: true
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
+        {{- if $useSecretBootstrap }}
+        - mountPath: /host-kubernetes
+          name: host-kubeconfig
+        {{- end }}
       containers:
       - name: nb-ovsdb
         image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
@@ -348,6 +375,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -405,6 +435,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -468,6 +501,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -501,7 +537,15 @@ spec:
       - name: doca-ovnkube-controller
         image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
         imagePullPolicy: {{ .Values.dpuManifests.image.pullPolicy }}
-        command: ["/root/ovnkube.sh", "ovnkube-controller-with-node"]
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          host_node_name_file=/var/run/ovn-kubernetes/host-node-name
+          if [ -s "${host_node_name_file}" ]; then
+            export K8S_NODE_DPU="$(tr -d '[:space:]' < "${host_node_name_file}")"
+          fi
+          exec /root/ovnkube.sh ovnkube-controller-with-node
         securityContext:
           runAsUser: 0
           privileged: true
@@ -537,6 +581,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
@@ -589,6 +636,27 @@ spec:
             configMapKeyRef:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
+        - name: K8S_TOKEN
+{{- if ne (default "" .Values.dpuManifests.hostClusterCredentials.token) "" }}
+          value: {{ .Values.dpuManifests.hostClusterCredentials.token | quote }}
+{{- else if ne (default "" .Values.dpuManifests.kubernetesSecretName) "" }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.dpuManifests.kubernetesSecretName }}
+              key: TOKEN_FILE
+{{- else }}
+          value: ""
+{{- end }}
+        - name: K8S_TOKEN_FILE
+          value: {{ default "/var/run/secrets/kubernetes.io/serviceaccount/token" .Values.dpuManifests.hostClusterCredentials.tokenFile | quote }}
+        - name: K8S_CACERT_DATA
+{{- if ne (default "" .Values.dpuManifests.hostClusterCredentials.caCertData) "" }}
+          value: {{ .Values.dpuManifests.hostClusterCredentials.caCertData | quote }}
+{{- else }}
+          value: ""
+{{- end }}
+        - name: K8S_CACERT
+          value: {{ default "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" .Values.dpuManifests.hostClusterCredentials.caCert | quote }}
         - name: OVN_MTU
           valueFrom:
             configMapKeyRef:
@@ -601,6 +669,10 @@ spec:
               key: routable_mtu
               optional: true
         - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: K8S_NODE_DPU
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
@@ -702,7 +774,7 @@ spec:
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: "false"
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
-          value: "false"
+          value: {{ hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity false | quote }}
         - name: OVN_DISABLE_REQUESTEDCHASSIS
           value: {{ default "false" .Values.dpuManifests.ovnDisableRequestedchassis | quote }}
         - name: OVN_ENABLE_SVC_TEMPLATE_SUPPORT
@@ -726,7 +798,15 @@ spec:
       - name: ovn-controller
         image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
         imagePullPolicy: {{ .Values.dpuManifests.image.pullPolicy }}
-        command: ["/root/ovnkube.sh", "ovn-controller"]
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          host_node_name_file=/var/run/ovn-kubernetes/host-node-name
+          if [ -s "${host_node_name_file}" ]; then
+            export K8S_NODE_DPU="$(tr -d '[:space:]' < "${host_node_name_file}")"
+          fi
+          exec /root/ovnkube.sh ovn-controller
         securityContext:
           runAsUser: 0
           capabilities:
@@ -744,8 +824,13 @@ spec:
           name: host-var-run-ovs
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -761,6 +846,10 @@ spec:
             configMapKeyRef:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
+        - name: K8S_NODE_DPU
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:
@@ -794,6 +883,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -845,8 +937,12 @@ spec:
         hostPath:
           path: /var/run/dbus
       - name: host-kubeconfig
+      {{- if $useSecretBootstrap }}
+        emptyDir: {}
+      {{- else }}
         hostPath:
           path: /etc/kubernetes/
+      {{- end }}
       - name: host-kubelet
         hostPath:
           path: /var/lib/kubelet
@@ -888,6 +984,9 @@ spec:
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
+      - name: ovnkube-config
+        configMap:
+          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       - name: tenant-cluster-access-secret
         secret:
           defaultMode: 420
