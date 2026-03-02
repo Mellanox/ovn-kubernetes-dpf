@@ -77,7 +77,7 @@ const (
 	brDPU = "br-dpu"
 
 	// ovnkInputPath is the path to the file in which ovnkube-controller expects the additional gateway opts
-	ovnkInputPath = "/etc/openvswitch/ovn_k8s.conf"
+	ovnkInputPath = "/etc/openvswitch/ovnkube.conf"
 	// brOVNNetplanConfigPath is the path to the file which contains the netplan configuration for br-ovn
 	brOVNNetplanConfigPath = "/etc/netplan/80-br-ovn.yaml"
 	// netplanApplyDonePath is a file that indicates that a netplan apply has already ran and was successful. The content
