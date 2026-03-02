@@ -599,9 +599,6 @@ spec:
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
-        - mountPath: /run/ovnkube-config
-          name: ovnkube-config
-          readOnly: true
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
           name: tenant-cluster-access-secret
           readOnly: true
@@ -1010,9 +1007,6 @@ spec:
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
-      - name: ovnkube-config
-        configMap:
-          name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
       - name: tenant-cluster-access-secret
         secret:
           defaultMode: 420
