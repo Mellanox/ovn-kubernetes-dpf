@@ -83,6 +83,8 @@ serviceNetwork: 10.96.0.0/12
 gatewayOpts: ""
 # -- MTU of network interface in a Kubernetes pod
 mtu: 1400
+# -- OVN daemonset version, used as the OVN_DAEMONSET_VERSION env var across components
+ovnDaemonsetVersion: "1.2.0"
 
 global:
   # -- The name of the secret used to pull images. Applies to all relevant manifests.

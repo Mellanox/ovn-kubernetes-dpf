@@ -389,7 +389,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: OVN_LOGLEVEL_NB
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -449,7 +449,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: OVN_LOGLEVEL_SB
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -510,7 +510,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: OVN_LOGLEVEL_NORTHD
           value: "-vconsole:info -vfile:info"
         - name: K8S_APISERVER
@@ -604,7 +604,7 @@ spec:
         - name: OVN_EGRESSSERVICE_ENABLE
           value: ""
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: OVNKUBE_LOGLEVEL
           value: "4"
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -838,7 +838,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: OVN_LOGLEVEL_CONTROLLER
           value: "-vconsole:info"
         - name: K8S_APISERVER
@@ -892,7 +892,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: {{ .Values.ovnDaemonsetVersion | quote }}
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
