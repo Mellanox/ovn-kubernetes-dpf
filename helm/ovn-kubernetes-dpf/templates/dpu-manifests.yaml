@@ -583,13 +583,13 @@ spec:
           name: host-ovn-cert
           readOnly: true
         - mountPath: /run/ovnkube-config
-          name: ovnkube-config
+          name: init-output
           readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
-        - mountPath: /etc/openvswitch/ovn_k8s.conf
+        - mountPath: /etc/openvswitch/ovnkube.conf
           name: init-output
-          subPath: ovn_k8s.conf
+          subPath: ovnkube.conf
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
