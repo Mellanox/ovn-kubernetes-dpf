@@ -88,7 +88,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			provisioner.FileSystemRoot = tmpDir
 			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
 			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
-			ovnInputPath := filepath.Join(ovnInputDirPath, "ovnkube.conf")
+			ovnInputPath := filepath.Join(ovnInputDirPath, "ovn_k8s.conf")
 
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
 			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
@@ -198,7 +198,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			provisioner.FileSystemRoot = tmpDir
 			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
 			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
-			ovnInputPath := filepath.Join(ovnInputDirPath, "ovnkube.conf")
+			ovnInputPath := filepath.Join(ovnInputDirPath, "ovn_k8s.conf")
 
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
 			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
@@ -534,7 +534,7 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 			Expect(os.MkdirAll(netplanDirPath, 0755)).To(Succeed())
 			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
 			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
-			ovnInputPath := filepath.Join(ovnInputDirPath, "ovnkube.conf")
+			ovnInputPath := filepath.Join(ovnInputDirPath, "ovn_k8s.conf")
 
 			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
 				Expect(cmd).To(Equal("netplan"))
