@@ -362,9 +362,6 @@ spec:
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
-        - mountPath: /run/ovnkube-config
-          name: ovnkube-config
-          readOnly: true
         resources:
           requests:
             cpu: 100m
