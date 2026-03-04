@@ -593,6 +593,9 @@ spec:
         - mountPath: /etc/openvswitch/ovn_k8s.conf
           name: init-output
           subPath: ovn_k8s.conf
+        - mountPath: /run/ovnkube-config/ovnkube.conf
+          name: init-output
+          subPath: ovn_k8s.conf
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
