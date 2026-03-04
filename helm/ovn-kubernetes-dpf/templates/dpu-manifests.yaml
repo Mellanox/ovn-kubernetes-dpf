@@ -280,6 +280,20 @@ spec:
             - cat
             - /var/run/readyz
           initialDelaySeconds: 30
+        {{- if not .Values.dpuManifests.externalDHCP }}
+        # Liveness probe to check DHCP server health (only for internal IPAM mode)
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Check if DHCP server is listening on UDP port 67
+              ss -uln | grep -q ':67 '
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          failureThreshold: 3
+        {{- end }}
         securityContext:
           privileged: true
           runAsUser: 0
