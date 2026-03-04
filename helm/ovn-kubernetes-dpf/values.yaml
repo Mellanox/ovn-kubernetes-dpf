@@ -117,7 +117,7 @@ global:
   # -- Configure to enable Egress QoS feature
   enableEgressQoS: ""
   # -- Configure to enable Multi-Network feature
-  enableMultiNetwork: ""
+  enableMultiNetwork: true
   # -- Configure to enable Multi-Network Policy feature
   enableMultiNetworkPolicy: ""
   # -- Configure to enable Admin Network Policy feature
