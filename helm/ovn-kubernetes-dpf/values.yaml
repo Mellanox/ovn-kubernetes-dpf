@@ -16,7 +16,7 @@ ovn-kubernetes-resource-injector:
   controllerManager:
     webhook:
       command:
-      - /ovnkubernetesresourceinjector
+        - /ovnkubernetesresourceinjector
       image:
         repository: ${OVNKUBERNETES_IMAGE}
         tag: ${TAG}
@@ -124,6 +124,8 @@ global:
   enableAdminNetworkPolicy: ""
   # -- EgressIP health check port. Default is 9107 (gRPC). Set to 9 for legacy DISCARD port.
   egressIpHealthCheckPort: "9107"
+  # -- ServiceAccount name for the cluster-manager component
+  clusterManagerServiceAccountName: "ovnkube-cluster-manager"
 
 # -- Variables related to common manifests used by components in both DPU and Host cluster
 commonManifests:
