@@ -356,6 +356,10 @@ spec:
         - mountPath: /run/ovnkube-config
           name: ovnkube-config
           readOnly: true
+        - mountPath: /run/systemd/private
+          name: run-systemd
+          subPath: private
+          readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
           readOnly: true
@@ -687,6 +691,9 @@ spec:
       - name: ovnkube-config
         configMap:
           name: {{ include "ovn-kubernetes.fullname" . }}-ovnkube-config
+      - name: run-systemd
+        hostPath:
+          path: /run/systemd
       tolerations:
       - operator: "Exists"
 {{- end }}
