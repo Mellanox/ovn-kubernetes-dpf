@@ -33,12 +33,15 @@ import (
 	"github.com/nvidia/ovn-kubernetes-components/internal/constants"
 	"github.com/nvidia/ovn-kubernetes-components/internal/utils/ovsclient"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	kexec "k8s.io/utils/exec"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Mode string
@@ -90,16 +93,19 @@ const (
 	hostBootstrapKubeconfigPath = "/host-kubernetes/kubelet.conf"
 	// hostNodeNameFilePath is the path used to publish mapped host node name for other containers in the pod.
 	hostNodeNameFilePath = "/var/run/ovn-kubernetes/host-node-name"
+	// hostNodeChassisIDAnnotationKey is the host-cluster node annotation used by OVN to track the chassis identity.
+	hostNodeChassisIDAnnotationKey = "k8s.ovn.org/node-chassis-id"
 )
 
 type DPUCNIProvisioner struct {
-	ctx                       context.Context
-	clock                     clock.Clock
-	ensureConfigurationTicker clock.Ticker
-	ovsClient                 ovsclient.OVSClient
-	networkHelper             networkhelper.NetworkHelper
-	exec                      kexec.Interface
-	kubernetesClient          kubernetes.Interface
+	ctx                        context.Context
+	clock                      clock.Clock
+	ensureConfigurationTicker  clock.Ticker
+	ovsClient                  ovsclient.OVSClient
+	networkHelper              networkhelper.NetworkHelper
+	exec                       kexec.Interface
+	dpuClusterKubernetesClient kubernetes.Interface
+	hostKubernetesClient       client.Client
 
 	// FileSystemRoot controls the file system root. It's used for enabling easier testing of the package. Defaults to
 	// empty.
@@ -159,27 +165,31 @@ func New(ctx context.Context,
 	ovnMTU int,
 ) *DPUCNIProvisioner {
 	return &DPUCNIProvisioner{
-		ctx:                       ctx,
-		clock:                     clock,
-		ensureConfigurationTicker: clock.NewTicker(30 * time.Second),
-		ovsClient:                 ovsClient,
-		networkHelper:             networkHelper,
-		exec:                      exec,
-		kubernetesClient:          kubernetesClient,
-		FileSystemRoot:            "",
-		K8sAPIServer:              "",
-		BootstrapKubeconfigPath:   hostBootstrapKubeconfigPath,
-		HostNodeNameFilePath:      hostNodeNameFilePath,
-		vtepIPNet:                 vtepIPNet,
-		gateway:                   gateway,
-		vtepCIDR:                  vtepCIDR,
-		hostCIDR:                  hostCIDR,
-		pfIP:                      pfIP,
-		dpuHostName:               dpuHostName,
-		mode:                      mode,
-		gatewayDiscoveryNetwork:   gatewayDiscoveryNetwork,
-		ovnMTU:                    ovnMTU,
+		ctx:                        ctx,
+		clock:                      clock,
+		ensureConfigurationTicker:  clock.NewTicker(30 * time.Second),
+		ovsClient:                  ovsClient,
+		networkHelper:              networkHelper,
+		exec:                       exec,
+		dpuClusterKubernetesClient: kubernetesClient,
+		FileSystemRoot:             "",
+		K8sAPIServer:               "",
+		BootstrapKubeconfigPath:    hostBootstrapKubeconfigPath,
+		HostNodeNameFilePath:       hostNodeNameFilePath,
+		vtepIPNet:                  vtepIPNet,
+		gateway:                    gateway,
+		vtepCIDR:                   vtepCIDR,
+		hostCIDR:                   hostCIDR,
+		pfIP:                       pfIP,
+		dpuHostName:                dpuHostName,
+		mode:                       mode,
+		gatewayDiscoveryNetwork:    gatewayDiscoveryNetwork,
+		ovnMTU:                     ovnMTU,
 	}
+}
+
+func (p *DPUCNIProvisioner) SetHostKubernetesClient(c client.Client) {
+	p.hostKubernetesClient = c
 }
 
 // RunOnce runs the provisioning flow once and exits
@@ -231,6 +241,9 @@ func (p *DPUCNIProvisioner) configure() error {
 	if err := p.writeHostIdentityBootstrapArtifacts(hostName); err != nil {
 		return fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
 	}
+	if err := p.reconcileHostNodeChassisID(hostName); err != nil {
+		return fmt.Errorf("error while reconciling host node chassis annotation: %w", err)
+	}
 
 	if p.mode == ExternalIPAM {
 		klog.Info("Configuring br-ovn")
@@ -257,9 +270,46 @@ func (p *DPUCNIProvisioner) configure() error {
 	return nil
 }
 
+// reconcileHostNodeChassisID removes a stale host-cluster node chassis annotation when it differs from the local OVS
+// system-id. This allows ovnkube-node to re-register after DPU reprovisioning.
+func (p *DPUCNIProvisioner) reconcileHostNodeChassisID(hostName string) error {
+	systemID, err := p.ovsClient.GetSystemID()
+	if err != nil {
+		return fmt.Errorf("error while reading local OVS system-id: %w", err)
+	}
+	if systemID == "" {
+		return fmt.Errorf("OVS system-id is empty for DPU node %s (host node %s)", p.dpuHostName, hostName)
+	}
+
+	node := &corev1.Node{}
+	if err := p.hostKubernetesClient.Get(p.ctx, k8stypes.NamespacedName{Name: hostName}, node); err != nil {
+		return fmt.Errorf("error while getting host cluster node %s: %w", hostName, err)
+	}
+
+	current := strings.TrimSpace(node.Annotations[hostNodeChassisIDAnnotationKey])
+	switch {
+	case current == "":
+		klog.Infof("Host cluster node %s has no %s annotation; no cleanup needed", hostName, hostNodeChassisIDAnnotationKey)
+		return nil
+	case current == systemID:
+		klog.Infof("Host cluster node %s already has matching %s=%s", hostName, hostNodeChassisIDAnnotationKey, systemID)
+		return nil
+	}
+
+	klog.Infof("Removing stale %s=%s from host cluster node %s to allow reprovisioned DPU system-id %s to register", hostNodeChassisIDAnnotationKey, current, hostName, systemID)
+	base := node.DeepCopy()
+	delete(node.Annotations, hostNodeChassisIDAnnotationKey)
+	if err := p.hostKubernetesClient.Patch(p.ctx, node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+		return fmt.Errorf("error while removing stale %s annotation from host node %s: %w", hostNodeChassisIDAnnotationKey, hostName, err)
+	}
+	klog.Infof("Removed stale %s=%s from host cluster node %s", hostNodeChassisIDAnnotationKey, current, hostName)
+
+	return nil
+}
+
 // findAndSetKubernetesHostNameInOVS discovers and sets the Kubernetes Host Name in OVS
 func (p *DPUCNIProvisioner) findAndSetKubernetesHostNameInOVS() (string, error) {
-	nodeClient := p.kubernetesClient.CoreV1().Nodes()
+	nodeClient := p.dpuClusterKubernetesClient.CoreV1().Nodes()
 	n, err := nodeClient.Get(p.ctx, p.dpuHostName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("error while getting Kubernetes Node: %w", err)

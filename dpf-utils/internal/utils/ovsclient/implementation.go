@@ -202,6 +202,22 @@ func (c *ovsClient) SetHostName(name string) error {
 	return err
 }
 
+// GetSystemID returns the local OVS system-id from the Open_vSwitch table.
+func (c *ovsClient) GetSystemID() (string, error) {
+	out, err := c.runOVSVsctl("--if-exists", "get", "Open_vSwitch", ".", "external_ids:system-id")
+	if err != nil {
+		return "", err
+	}
+
+	systemID := strings.TrimSpace(out)
+	systemID = strings.Trim(systemID, "\"")
+	if systemID == "[]" {
+		return "", nil
+	}
+
+	return systemID, nil
+}
+
 // InterfaceToBridge returns the bridge an interface exists in
 func (c *ovsClient) InterfaceToBridge(iface string) (string, error) {
 	out, err := c.runOVSVsctl("iface-to-br", iface)
