@@ -19,6 +19,7 @@ package dpucniprovisioner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -34,6 +35,7 @@ import (
 	"github.com/nvidia/ovn-kubernetes-components/internal/utils/ovsclient"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -90,6 +92,8 @@ const (
 	hostBootstrapKubeconfigPath = "/host-kubernetes/kubelet.conf"
 	// hostNodeNameFilePath is the path used to publish mapped host node name for other containers in the pod.
 	hostNodeNameFilePath = "/var/run/ovn-kubernetes/host-node-name"
+	// hostNodeChassisIDAnnotation is the host-cluster node annotation used by OVN to track the chassis identity.
+	hostNodeChassisIDAnnotation = "k8s.ovn.org/node-chassis-id"
 )
 
 type DPUCNIProvisioner struct {
@@ -100,6 +104,7 @@ type DPUCNIProvisioner struct {
 	networkHelper             networkhelper.NetworkHelper
 	exec                      kexec.Interface
 	kubernetesClient          kubernetes.Interface
+	HostKubernetesClient      kubernetes.Interface
 
 	// FileSystemRoot controls the file system root. It's used for enabling easier testing of the package. Defaults to
 	// empty.
@@ -231,6 +236,9 @@ func (p *DPUCNIProvisioner) configure() error {
 	if err := p.writeHostIdentityBootstrapArtifacts(hostName); err != nil {
 		return fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
 	}
+	if err := p.reconcileHostNodeChassisID(hostName); err != nil {
+		return fmt.Errorf("error while reconciling host node chassis annotation: %w", err)
+	}
 
 	if p.mode == ExternalIPAM {
 		klog.Info("Configuring br-ovn")
@@ -253,6 +261,55 @@ func (p *DPUCNIProvisioner) configure() error {
 	if err := p.configureSymmetricRouting(); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// reconcileHostNodeChassisID removes a stale host-cluster node chassis annotation when it differs from the local OVS
+// system-id. This allows ovnkube-node to re-register after DPU reprovisioning.
+func (p *DPUCNIProvisioner) reconcileHostNodeChassisID(hostName string) error {
+	if p.HostKubernetesClient == nil {
+		return nil
+	}
+
+	systemID, err := p.ovsClient.GetSystemID()
+	if err != nil {
+		return fmt.Errorf("error while reading local OVS system-id: %w", err)
+	}
+	if systemID == "" {
+		return fmt.Errorf("OVS system-id is empty for DPU node %s (host node %s)", p.dpuHostName, hostName)
+	}
+
+	node, err := p.HostKubernetesClient.CoreV1().Nodes().Get(p.ctx, hostName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("error while getting host cluster node %s: %w", hostName, err)
+	}
+
+	current := strings.TrimSpace(node.Annotations[hostNodeChassisIDAnnotation])
+	switch {
+	case current == "":
+		klog.Infof("Host cluster node %s has no %s annotation; no cleanup needed", hostName, hostNodeChassisIDAnnotation)
+		return nil
+	case current == systemID:
+		klog.Infof("Host cluster node %s already has matching %s=%s", hostName, hostNodeChassisIDAnnotation, systemID)
+		return nil
+	}
+
+	klog.Infof("Removing stale %s=%s from host cluster node %s to allow reprovisioned DPU system-id %s to register", hostNodeChassisIDAnnotation, current, hostName, systemID)
+	patch, err := json.Marshal([]map[string]string{
+		{
+			"op":   "remove",
+			"path": "/metadata/annotations/k8s.ovn.org~1node-chassis-id",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error while creating host node chassis annotation patch: %w", err)
+	}
+
+	if _, err := p.HostKubernetesClient.CoreV1().Nodes().Patch(p.ctx, hostName, k8stypes.JSONPatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("error while removing stale %s annotation from host node %s: %w", hostNodeChassisIDAnnotation, hostName, err)
+	}
+	klog.Infof("Removed stale %s=%s from host cluster node %s", hostNodeChassisIDAnnotation, current, hostName)
 
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/nvidia/doca-platform/pkg/ipallocator"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	kexec "k8s.io/utils/exec"
@@ -50,6 +52,10 @@ const (
 	// pfIPAllocationFilePath is the path to the file that contains the PF IP allocation done by the IP Allocator.
 	// We should ensure that the IP Allocation request name is pf to have this file created correctly.
 	pfIPAllocationFilePath = "/tmp/ips/pf"
+	// hostClusterTokenFilePath is where cniprovisioner expects the host-cluster token to be mounted.
+	hostClusterTokenFilePath = "/host-cluster-access/token"
+	// hostClusterCAFilePath is where cniprovisioner expects the host-cluster CA bundle to be mounted.
+	hostClusterCAFilePath = "/host-cluster-access/ca.crt"
 )
 
 func main() {
@@ -129,6 +135,11 @@ func main() {
 
 	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
+	hostClusterClient, err := newHostClusterClient(provisioner.K8sAPIServer)
+	if err != nil {
+		klog.Fatal(err)
+	}
+	provisioner.HostKubernetesClient = hostClusterClient
 
 	err = provisioner.RunOnce()
 	if err != nil {
@@ -244,6 +255,42 @@ func getHostCIDR() (*net.IPNet, error) {
 	}
 
 	return hostCIDR, nil
+}
+
+func newHostClusterClient(apiServer string) (kubernetes.Interface, error) {
+	if strings.TrimSpace(apiServer) == "" {
+		return nil, nil
+	}
+
+	if _, err := os.Stat(hostClusterTokenFilePath); err != nil {
+		if os.IsNotExist(err) {
+			klog.Infof("Skipping host-cluster client setup because %s is not present", hostClusterTokenFilePath)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("error while checking host cluster token file %s: %w", hostClusterTokenFilePath, err)
+	}
+	if _, err := os.Stat(hostClusterCAFilePath); err != nil {
+		if os.IsNotExist(err) {
+			klog.Infof("Skipping host-cluster client setup because %s is not present", hostClusterCAFilePath)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("error while checking host cluster CA file %s: %w", hostClusterCAFilePath, err)
+	}
+
+	hostConfig := &rest.Config{
+		Host:            apiServer,
+		BearerTokenFile: hostClusterTokenFilePath,
+		TLSClientConfig: rest.TLSClientConfig{
+			CAFile: hostClusterCAFilePath,
+		},
+	}
+
+	clientset, err := kubernetes.NewForConfig(hostConfig)
+	if err != nil {
+		return nil, fmt.Errorf("error while creating host cluster client: %w", err)
+	}
+
+	return clientset, nil
 }
 
 // getGatewayDiscoveryNetwork returns the Network to be used by the provisioner to discover the gateway
