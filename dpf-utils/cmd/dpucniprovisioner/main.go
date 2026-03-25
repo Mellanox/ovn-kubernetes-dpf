@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/nvidia/doca-platform/pkg/ipallocator"
@@ -37,9 +38,12 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/client-go/kubernetes"
+	k8sscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	kexec "k8s.io/utils/exec"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
@@ -50,6 +54,10 @@ const (
 	// pfIPAllocationFilePath is the path to the file that contains the PF IP allocation done by the IP Allocator.
 	// We should ensure that the IP Allocation request name is pf to have this file created correctly.
 	pfIPAllocationFilePath = "/tmp/ips/pf"
+	// hostClusterTokenFilePath is where cniprovisioner expects the host-cluster token to be mounted.
+	hostClusterTokenFilePath = "/host-cluster-access/token"
+	// hostClusterCAFilePath is where cniprovisioner expects the host-cluster CA bundle to be mounted.
+	hostClusterCAFilePath = "/host-cluster-access/ca.crt"
 )
 
 func main() {
@@ -129,6 +137,11 @@ func main() {
 
 	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
+	hostClusterClient, err := newHostClusterClient(provisioner.K8sAPIServer)
+	if err != nil {
+		klog.Fatal(err)
+	}
+	provisioner.SetHostKubernetesClient(hostClusterClient)
 
 	err = provisioner.RunOnce()
 	if err != nil {
@@ -244,6 +257,40 @@ func getHostCIDR() (*net.IPNet, error) {
 	}
 
 	return hostCIDR, nil
+}
+
+func newHostClusterClient(apiServer string) (client.Client, error) {
+	if strings.TrimSpace(apiServer) == "" {
+		return nil, errors.New("K8S_APISERVER must be set to initialize host-cluster access")
+	}
+
+	if _, err := os.Stat(hostClusterTokenFilePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("missing host-cluster access token at %s; required to reconcile host node chassis annotations", hostClusterTokenFilePath)
+		}
+		return nil, fmt.Errorf("error while checking host cluster token file %s: %w", hostClusterTokenFilePath, err)
+	}
+	if _, err := os.Stat(hostClusterCAFilePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("missing host-cluster CA bundle at %s; required to reconcile host node chassis annotations", hostClusterCAFilePath)
+		}
+		return nil, fmt.Errorf("error while checking host cluster CA file %s: %w", hostClusterCAFilePath, err)
+	}
+
+	hostConfig := &rest.Config{
+		Host:            apiServer,
+		BearerTokenFile: hostClusterTokenFilePath,
+		TLSClientConfig: rest.TLSClientConfig{
+			CAFile: hostClusterCAFilePath,
+		},
+	}
+
+	hostClient, err := client.New(hostConfig, client.Options{Scheme: k8sscheme.Scheme})
+	if err != nil {
+		return nil, fmt.Errorf("error while creating host cluster client: %w", err)
+	}
+
+	return hostClient, nil
 }
 
 // getGatewayDiscoveryNetwork returns the Network to be used by the provisioner to discover the gateway

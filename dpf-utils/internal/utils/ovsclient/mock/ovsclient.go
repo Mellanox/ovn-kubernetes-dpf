@@ -188,6 +188,21 @@ func (mr *MockOVSClientMockRecorder) GetInterfacesWithPMDRXQueue() *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetInterfacesWithPMDRXQueue", reflect.TypeOf((*MockOVSClient)(nil).GetInterfacesWithPMDRXQueue))
 }
 
+// GetSystemID mocks base method.
+func (m *MockOVSClient) GetSystemID() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSystemID")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSystemID indicates an expected call of GetSystemID.
+func (mr *MockOVSClientMockRecorder) GetSystemID() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSystemID", reflect.TypeOf((*MockOVSClient)(nil).GetSystemID))
+}
+
 // GetPortExternalIDs mocks base method.
 func (m *MockOVSClient) GetPortExternalIDs(port string) (map[string]string, error) {
 	m.ctrl.T.Helper()

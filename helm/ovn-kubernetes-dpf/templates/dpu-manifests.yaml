@@ -367,6 +367,9 @@ spec:
         {{- if $useSecretBootstrap }}
         - mountPath: /host-kubernetes
           name: host-kubeconfig
+        - mountPath: /host-cluster-access
+          name: tenant-cluster-access-secret
+          readOnly: true
         {{- end }}
       containers:
       - name: nb-ovsdb
