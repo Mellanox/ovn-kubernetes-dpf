@@ -56,6 +56,8 @@ type OVSClient interface {
 	SetKubernetesHostNodeName(name string) error
 	// SetHostName sets the hostname external ID in the Open_vSwitch table in OVS
 	SetHostName(name string) error
+	// GetSystemID returns the local OVS system-id from the Open_vSwitch table.
+	GetSystemID() (string, error)
 
 	// InterfaceToBridge returns the bridge an interface exists in
 	InterfaceToBridge(iface string) (string, error)

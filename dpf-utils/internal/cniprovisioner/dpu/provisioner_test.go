@@ -36,11 +36,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	testclient "k8s.io/client-go/kubernetes/fake"
+	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 	clock "k8s.io/utils/clock/testing"
 	kexec "k8s.io/utils/exec"
 	kexecTesting "k8s.io/utils/exec/testing"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func newHostKubernetesClient(nodeName string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeName,
+		},
+	}
+}
 
 var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 	Context("When it runs once for the first time", func() {
@@ -76,7 +86,9 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				},
 			}
 			kubernetesClient := testclient.NewClientset()
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 8940)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -132,6 +144,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().AddRoute(vtepCIDR, defaultGateway, "br-comm-ch", nil, ptr.To(60)).Return(nil)
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
+			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil)
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
 			ovsClient.EXPECT().SetHostName("host1")
 
@@ -186,7 +199,9 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				},
 			}
 			kubernetesClient := testclient.NewClientset()
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1440)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -243,6 +258,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().AddRoute(vtepCIDR, defaultGateway, "br-comm-ch", nil, ptr.To(60)).Return(nil)
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
+			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil)
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
 			ovsClient.EXPECT().SetHostName("host1")
 
@@ -265,6 +281,210 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 		})
 	})
 	Context("When checking for idempotency", func() {
+		It("should remove a stale host node chassis annotation when it differs from the local OVS system-id", func(ctx context.Context) {
+			testCtrl := gomock.NewController(GinkgoT())
+			ovsClient := ovsclientMock.NewMockOVSClient(testCtrl)
+			networkhelper := networkhelperMock.NewMockNetworkHelper(testCtrl)
+			fakeExec := &kexecTesting.FakeExec{}
+			vtepIPNet, err := netlink.ParseIPNet("192.168.1.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			gateway := net.ParseIP("192.168.1.10")
+			vtepCIDR, err := netlink.ParseIPNet("192.168.1.0/23")
+			Expect(err).ToNot(HaveOccurred())
+			hostCIDR, err := netlink.ParseIPNet("10.0.100.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
+			Expect(err).ToNot(HaveOccurred())
+			fakeNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "dpu1",
+					Labels: map[string]string{
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
+					},
+				},
+			}
+			hostNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "host1",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-chassis-id": "stale-system-id",
+					},
+				},
+			}
+			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(hostNode).Build()
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
+
+			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
+			defer func() {
+				err := os.RemoveAll(tmpDir)
+				Expect(err).ToNot(HaveOccurred())
+			}()
+			Expect(err).NotTo(HaveOccurred())
+			provisioner.FileSystemRoot = tmpDir
+			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
+			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
+
+			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
+				return kexec.New().Command("echo")
+			}))
+
+			dummyIP, err := netlink.ParseIPNet("10.244.6.30/24")
+			Expect(err).ToNot(HaveOccurred())
+			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{dummyIP}, nil)
+			networkhelper.EXPECT().GetLinkIPAddresses("br-comm-ch").Return([]*net.IPNet{dummyIP}, nil)
+
+			networkHelperMockAll(networkhelper)
+			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
+			ovsClient.EXPECT().GetSystemID().Return("new-system-id", nil)
+			ovsClient.EXPECT().SetOVNEncapIP(gomock.Any()).AnyTimes()
+
+			err = provisioner.RunOnce()
+			Expect(err).ToNot(HaveOccurred())
+
+			updatedHostNode := &corev1.Node{}
+			err = hostKubernetesClient.Get(ctx, types.NamespacedName{Name: "host1"}, updatedHostNode)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(updatedHostNode.Annotations).ToNot(HaveKey("k8s.ovn.org/node-chassis-id"))
+		})
+
+		It("should keep the host node chassis annotation when it already matches the local OVS system-id", func(ctx context.Context) {
+			testCtrl := gomock.NewController(GinkgoT())
+			ovsClient := ovsclientMock.NewMockOVSClient(testCtrl)
+			networkhelper := networkhelperMock.NewMockNetworkHelper(testCtrl)
+			fakeExec := &kexecTesting.FakeExec{}
+			vtepIPNet, err := netlink.ParseIPNet("192.168.1.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			gateway := net.ParseIP("192.168.1.10")
+			vtepCIDR, err := netlink.ParseIPNet("192.168.1.0/23")
+			Expect(err).ToNot(HaveOccurred())
+			hostCIDR, err := netlink.ParseIPNet("10.0.100.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
+			Expect(err).ToNot(HaveOccurred())
+			fakeNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "dpu1",
+					Labels: map[string]string{
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
+					},
+				},
+			}
+			hostNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "host1",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-chassis-id": "current-system-id",
+					},
+				},
+			}
+			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(hostNode).Build()
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
+
+			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
+			defer func() {
+				err := os.RemoveAll(tmpDir)
+				Expect(err).ToNot(HaveOccurred())
+			}()
+			Expect(err).NotTo(HaveOccurred())
+			provisioner.FileSystemRoot = tmpDir
+			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
+			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
+
+			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
+				return kexec.New().Command("echo")
+			}))
+
+			dummyIP, err := netlink.ParseIPNet("10.244.6.30/24")
+			Expect(err).ToNot(HaveOccurred())
+			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{dummyIP}, nil)
+			networkhelper.EXPECT().GetLinkIPAddresses("br-comm-ch").Return([]*net.IPNet{dummyIP}, nil)
+
+			networkHelperMockAll(networkhelper)
+			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
+			ovsClient.EXPECT().GetSystemID().Return("current-system-id", nil)
+			ovsClient.EXPECT().SetOVNEncapIP(gomock.Any()).AnyTimes()
+
+			err = provisioner.RunOnce()
+			Expect(err).ToNot(HaveOccurred())
+
+			updatedHostNode := &corev1.Node{}
+			err = hostKubernetesClient.Get(ctx, types.NamespacedName{Name: "host1"}, updatedHostNode)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(updatedHostNode.Annotations).To(HaveKeyWithValue("k8s.ovn.org/node-chassis-id", "current-system-id"))
+		})
+
+		It("should keep the host node chassis annotation absent when it is not set", func(ctx context.Context) {
+			testCtrl := gomock.NewController(GinkgoT())
+			ovsClient := ovsclientMock.NewMockOVSClient(testCtrl)
+			networkhelper := networkhelperMock.NewMockNetworkHelper(testCtrl)
+			fakeExec := &kexecTesting.FakeExec{}
+			vtepIPNet, err := netlink.ParseIPNet("192.168.1.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			gateway := net.ParseIP("192.168.1.10")
+			vtepCIDR, err := netlink.ParseIPNet("192.168.1.0/23")
+			Expect(err).ToNot(HaveOccurred())
+			hostCIDR, err := netlink.ParseIPNet("10.0.100.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
+			Expect(err).ToNot(HaveOccurred())
+			fakeNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "dpu1",
+					Labels: map[string]string{
+						"provisioning.dpu.nvidia.com/dpunode-name": "host1",
+					},
+				},
+			}
+			hostNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "host1",
+				},
+			}
+			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(hostNode).Build()
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
+
+			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
+			defer func() {
+				err := os.RemoveAll(tmpDir)
+				Expect(err).ToNot(HaveOccurred())
+			}()
+			Expect(err).NotTo(HaveOccurred())
+			provisioner.FileSystemRoot = tmpDir
+			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
+			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
+
+			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
+				return kexec.New().Command("echo")
+			}))
+
+			dummyIP, err := netlink.ParseIPNet("10.244.6.30/24")
+			Expect(err).ToNot(HaveOccurred())
+			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{dummyIP}, nil)
+			networkhelper.EXPECT().GetLinkIPAddresses("br-comm-ch").Return([]*net.IPNet{dummyIP}, nil)
+
+			networkHelperMockAll(networkhelper)
+			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
+			ovsClient.EXPECT().SetHostName("host1")
+			ovsClient.EXPECT().GetSystemID().Return("new-system-id", nil)
+			ovsClient.EXPECT().SetOVNEncapIP(gomock.Any()).AnyTimes()
+
+			err = provisioner.RunOnce()
+			Expect(err).ToNot(HaveOccurred())
+
+			updatedHostNode := &corev1.Node{}
+			err = hostKubernetesClient.Get(ctx, types.NamespacedName{Name: "host1"}, updatedHostNode)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(updatedHostNode.Annotations).ToNot(HaveKey("k8s.ovn.org/node-chassis-id"))
+		})
+
 		It("should not error out on subsequent runs when network calls and OVS calls are fully mocked", func(ctx context.Context) {
 			testCtrl := gomock.NewController(GinkgoT())
 			ovsClient := ovsclientMock.NewMockOVSClient(testCtrl)
@@ -288,7 +508,9 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				},
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -355,7 +577,9 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				},
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -373,6 +597,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}))
 
 			By("Checking the first run")
+			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil).AnyTimes()
 			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet)
 			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
@@ -449,7 +674,9 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				},
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -520,7 +747,9 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 				},
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -542,6 +771,7 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 				return kexec.New().Command("echo")
 			}))
 
+			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil)
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
 			ovsClient.EXPECT().SetHostName("host1")
 			brOVNAddress, err := netlink.ParseIPNet("192.168.0.3/23")
@@ -623,7 +853,9 @@ network:
 				},
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -650,6 +882,7 @@ network:
 			Expect(err).ToNot(HaveOccurred())
 			gateway := net.ParseIP("192.168.1.254")
 			By("Checking the first run")
+			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil).AnyTimes()
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
 			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{}, nil)
@@ -738,7 +971,9 @@ network:
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			fakeClock := clock.NewFakeClock(time.Now())
+			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
 			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, fakeClock, ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
+			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -767,6 +1002,7 @@ network:
 			gateway := net.ParseIP("192.168.1.254")
 
 			By("Checking the first run")
+			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil).AnyTimes()
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
 			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{}, nil)
@@ -844,6 +1080,7 @@ func networkHelperMockAll(networkHelper *networkhelperMock.MockNetworkHelper) {
 
 // ovsClientMockAll mocks all ovsclient functions. Useful for tests where we don't test the ovsclient calls
 func ovsClientMockAll(ovsClient *ovsclientMock.MockOVSClient) {
+	ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil).AnyTimes()
 	ovsClient.EXPECT().SetKubernetesHostNodeName(gomock.Any()).AnyTimes()
 	ovsClient.EXPECT().SetHostName(gomock.Any()).AnyTimes()
 	ovsClient.EXPECT().SetOVNEncapIP(gomock.Any()).AnyTimes()
