@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
-	url = git@github.com:Mellanox/ovn-kubernetes.git
-	branch = v26.04
+	url = git@github.com:aserdean/ovn-kubernetes.git
+	branch = fixup_multi_homed_hosts
