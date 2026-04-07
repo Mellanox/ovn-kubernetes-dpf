@@ -42,7 +42,7 @@ spec:
         securityContext: {{- toYaml .Values.controllerManager.webhook.containerSecurityContext
           | nindent 10 }}
         ports:
-        - containerPort: 9443
+        - containerPort: {{ .Values.controllerManager.webhookPort }}
           name: webhook-server
           protocol: TCP
         volumeMounts:
