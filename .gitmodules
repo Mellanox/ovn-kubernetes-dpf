@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
 	url = git@github.com:aserdean/ovn-kubernetes.git
-	branch = fixup_multi_homed_hosts
+	branch = fixup_multi_homed_hosts_v8
