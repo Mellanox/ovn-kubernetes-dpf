@@ -10,7 +10,7 @@ spec:
   ports:
   - port: 443
     protocol: TCP
-    targetPort: 9443
+    targetPort: {{ .Values.controllerManager.webhookPort }}
   selector:
     dpu.nvidia.com/component: ovn-kubernetes-resource-injector
     {{- include "ovn-kubernetes-resource-injector.selectorLabels" . | nindent 4 }}

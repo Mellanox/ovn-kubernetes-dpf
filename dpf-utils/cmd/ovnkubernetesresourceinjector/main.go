@@ -74,6 +74,7 @@ func main() {
 	var nadNamespace string
 	var dpuHostLabel string
 	var prioritizeOffloading bool
+	var webhookPort int
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -94,6 +95,7 @@ func main() {
 		"The label that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection. Format: key=value")
 	flag.BoolVar(&prioritizeOffloading, "prioritize-offloading", true,
 		"When enabled, injects VFs when pod selectors match both nodes with and without the DPU label")
+	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server binds to.")
 
 	opts := zap.Options{
 		Development: true,
@@ -128,6 +130,7 @@ func main() {
 
 	webhookServer := webhook.NewServer(webhook.Options{
 		TLSOpts: tlsOpts,
+		Port:    webhookPort,
 	})
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
