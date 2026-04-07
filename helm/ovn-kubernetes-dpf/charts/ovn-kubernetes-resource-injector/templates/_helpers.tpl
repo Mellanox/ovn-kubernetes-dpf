@@ -82,6 +82,7 @@ The args to be passed to the webhook
 {{- $args = append $args (printf "--dpu-host-label=%s" .Values.dpuHostLabel) }}
 {{- $args = append $args (printf "--prioritize-offloading=%t" .Values.prioritizeOffloading) }}
 {{- $args = append $args (printf "--webhook-port=%d" (int .Values.controllerManager.webhookPort)) }}
+{{- $args = append $args (printf "--health-probe-bind-address=%s" (.Values.controllerManager.healthProbeBindAddress | toString)) }}
 {{- toYaml $args }}
 {{- end }}
 
