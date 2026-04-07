@@ -23,6 +23,7 @@ controllerManager:
   serviceAccount:
     annotations: {}
   webhookPort: 9443
+  healthProbeBindAddress: ":8081"
   hostNetwork: false
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""

@@ -24,19 +24,22 @@ spec:
         command: {{- toYaml .Values.controllerManager.webhook.command | nindent 8 }}
         image: {{ .Values.controllerManager.webhook.image.repository }}:{{ .Values.controllerManager.webhook.image.tag
           | default .Chart.AppVersion }}
+        {{- $probeAddr := .Values.controllerManager.healthProbeBindAddress | toString }}
+        {{- if and $probeAddr (ne $probeAddr "0") }}
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: {{ last (splitList ":" $probeAddr) | atoi }}
           initialDelaySeconds: 15
           periodSeconds: 20
-        name: webhook
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: {{ last (splitList ":" $probeAddr) | atoi }}
           initialDelaySeconds: 5
           periodSeconds: 10
+        {{- end }}
+        name: webhook
         resources: {{- toYaml .Values.controllerManager.webhook.resources | nindent 10
           }}
         securityContext: {{- toYaml .Values.controllerManager.webhook.containerSecurityContext
