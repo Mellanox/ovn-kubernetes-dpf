@@ -12,6 +12,7 @@ controllerManager:
     image:
       repository: example.com/ovn-kubernetes-resource-injector
       tag: v0.1.0
+      pullPolicy: IfNotPresent
     resources:
       limits:
         cpu: 500m
