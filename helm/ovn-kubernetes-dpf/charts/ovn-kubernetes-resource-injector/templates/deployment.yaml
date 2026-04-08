@@ -24,6 +24,7 @@ spec:
         command: {{- toYaml .Values.controllerManager.webhook.command | nindent 8 }}
         image: {{ .Values.controllerManager.webhook.image.repository }}:{{ .Values.controllerManager.webhook.image.tag
           | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.controllerManager.webhook.image.pullPolicy | default "IfNotPresent" }}
         {{- $probeAddr := .Values.controllerManager.healthProbeBindAddress | toString }}
         {{- if and $probeAddr (ne $probeAddr "0") }}
         livenessProbe:
