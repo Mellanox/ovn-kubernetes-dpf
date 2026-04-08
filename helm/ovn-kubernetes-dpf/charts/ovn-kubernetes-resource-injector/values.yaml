@@ -21,6 +21,12 @@ controllerManager:
         cpu: 10m
         memory: 64Mi
   replicas: 1
+  # -- Deployment strategy. When hostNetwork is true, Recreate is used automatically.
+  # strategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxSurge: 1
+  #     maxUnavailable: 0
   serviceAccount:
     annotations: {}
   webhookPort: 9443

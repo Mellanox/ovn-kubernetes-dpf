@@ -8,6 +8,13 @@ metadata:
   {{- include "ovn-kubernetes-resource-injector.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.controllerManager.replicas }}
+  {{- if .Values.controllerManager.hostNetwork }}
+  strategy:
+    type: Recreate
+  {{- else if .Values.controllerManager.strategy }}
+  strategy:
+    {{- toYaml .Values.controllerManager.strategy | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       dpu.nvidia.com/component: ovn-kubernetes-resource-injector
