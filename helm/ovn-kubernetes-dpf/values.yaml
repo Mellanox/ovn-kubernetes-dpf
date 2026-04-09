@@ -20,6 +20,7 @@ ovn-kubernetes-resource-injector:
       image:
         repository: ${OVNKUBERNETES_IMAGE}
         tag: ${TAG}
+        pullPolicy: IfNotPresent
 
 # -- Variables related to manifests that are deployed for nodes with DPU
 nodeWithDPUManifests:

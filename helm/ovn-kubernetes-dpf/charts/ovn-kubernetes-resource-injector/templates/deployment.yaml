@@ -8,6 +8,13 @@ metadata:
   {{- include "ovn-kubernetes-resource-injector.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.controllerManager.replicas }}
+  {{- if .Values.controllerManager.hostNetwork }}
+  strategy:
+    type: Recreate
+  {{- else if .Values.controllerManager.strategy }}
+  strategy:
+    {{- toYaml .Values.controllerManager.strategy | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       dpu.nvidia.com/component: ovn-kubernetes-resource-injector
@@ -24,6 +31,7 @@ spec:
         command: {{- toYaml .Values.controllerManager.webhook.command | nindent 8 }}
         image: {{ .Values.controllerManager.webhook.image.repository }}:{{ .Values.controllerManager.webhook.image.tag
           | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.controllerManager.webhook.image.pullPolicy | default "IfNotPresent" }}
         {{- $probeAddr := .Values.controllerManager.healthProbeBindAddress | toString }}
         {{- if and $probeAddr (ne $probeAddr "0") }}
         livenessProbe:
