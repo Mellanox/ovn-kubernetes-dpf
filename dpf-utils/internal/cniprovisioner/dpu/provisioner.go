@@ -273,6 +273,11 @@ func (p *DPUCNIProvisioner) configure() error {
 // reconcileHostNodeChassisID removes a stale host-cluster node chassis annotation when it differs from the local OVS
 // system-id. This allows ovnkube-node to re-register after DPU reprovisioning.
 func (p *DPUCNIProvisioner) reconcileHostNodeChassisID(hostName string) error {
+	if p.hostKubernetesClient == nil {
+		klog.Info("Skipping host-cluster chassis-id reconciliation (no host-cluster client)")
+		return nil
+	}
+
 	systemID, err := p.ovsClient.GetSystemID()
 	if err != nil {
 		return fmt.Errorf("error while reading local OVS system-id: %w", err)

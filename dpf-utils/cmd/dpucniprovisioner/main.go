@@ -137,11 +137,15 @@ func main() {
 
 	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
-	hostClusterClient, err := newHostClusterClient(provisioner.K8sAPIServer)
-	if err != nil {
-		klog.Fatal(err)
+	if strings.TrimSpace(provisioner.K8sAPIServer) != "" {
+		hostClusterClient, err := newHostClusterClient(provisioner.K8sAPIServer)
+		if err != nil {
+			klog.Fatal(err)
+		}
+		provisioner.SetHostKubernetesClient(hostClusterClient)
+	} else {
+		klog.Info("K8S_APISERVER is not set; host-cluster Kubernetes client disabled (tenant stale chassis-id reconciliation skipped)")
 	}
-	provisioner.SetHostKubernetesClient(hostClusterClient)
 
 	err = provisioner.RunOnce()
 	if err != nil {
@@ -260,10 +264,6 @@ func getHostCIDR() (*net.IPNet, error) {
 }
 
 func newHostClusterClient(apiServer string) (client.Client, error) {
-	if strings.TrimSpace(apiServer) == "" {
-		return nil, errors.New("K8S_APISERVER must be set to initialize host-cluster access")
-	}
-
 	if _, err := os.Stat(hostClusterTokenFilePath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("missing host-cluster access token at %s; required to reconcile host node chassis annotations", hostClusterTokenFilePath)
