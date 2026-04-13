@@ -44,7 +44,6 @@ import (
 	"k8s.io/utils/clock"
 	kexec "k8s.io/utils/exec"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 const (
@@ -126,11 +125,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := clock.RealClock{}
 
-	config, err := config.GetConfig()
+	// Always use the pod service account (tenant/DPU cluster). Do not use controller-runtime's
+	// config.GetConfig(): it skips in-cluster when KUBECONFIG is set and may load a kubeconfig
+	// that points at another API (e.g. host cluster), which breaks Node label lookups.
+	restCfg, err := rest.InClusterConfig()
 	if err != nil {
-		klog.Fatal(err)
+		klog.Fatalf("in-cluster Kubernetes config (DPU/tenant API): %v", err)
 	}
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		klog.Fatal(err)
 	}
@@ -276,11 +278,9 @@ func parseDPUNodeLeaseFromEnv() (ok bool, renewInterval int, leaseDuration int, 
 			return false, 0, 0, fmt.Errorf("invalid OVNKUBE_NODE_DPU_LEASE_DURATION %q: %w", durRaw, err)
 		}
 	}
-	if leaseDuration <= 0 {
-		return false, 0, 0, fmt.Errorf("OVNKUBE_NODE_DPU_LEASE_DURATION must be > 0, got %d", leaseDuration)
-	}
-	if renewInterval > 0 && leaseDuration <= renewInterval {
-		return false, 0, 0, fmt.Errorf("OVNKUBE_NODE_DPU_LEASE_DURATION (%d) must be greater than OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL (%d)", leaseDuration, renewInterval)
+	if renewInterval <= 0 || leaseDuration <= 0 || leaseDuration <= renewInterval {
+		return false, 0, 0, fmt.Errorf("invalid lease config: renewInterval (%d) and leaseDuration (%d) must be > 0, and leaseDuration must be greater than renewInterval",
+			renewInterval, leaseDuration)
 	}
 	return true, renewInterval, leaseDuration, nil
 }
