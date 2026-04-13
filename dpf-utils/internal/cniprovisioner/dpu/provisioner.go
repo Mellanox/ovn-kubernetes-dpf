@@ -360,7 +360,7 @@ func (p *DPUCNIProvisioner) findAndSetKubernetesHostNameInOVS() (string, error) 
 		hostName, ok = n.Labels[constants.HostNameDPULabelKey]
 		labelKey = constants.HostNameDPULabelKey
 		if !ok {
-			return "", fmt.Errorf("required label %s is not set on node %s in the DPU cluster", provisioningv1.DPUNodeNameLabel, p.dpuHostName)
+			return "", fmt.Errorf("neither label %s nor %s is set on node %s", provisioningv1.DPUNodeNameLabel, constants.HostNameDPULabelKey, p.dpuHostName)
 		}
 	}
 	hostName = strings.TrimSpace(hostName)
