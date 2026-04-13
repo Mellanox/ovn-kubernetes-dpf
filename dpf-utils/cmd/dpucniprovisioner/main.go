@@ -44,7 +44,6 @@ import (
 	"k8s.io/utils/clock"
 	kexec "k8s.io/utils/exec"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 const (
@@ -126,11 +125,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := clock.RealClock{}
 
-	config, err := config.GetConfig()
+	// Always use the pod service account (tenant/DPU cluster). Do not use controller-runtime's
+	// config.GetConfig(): it skips in-cluster when KUBECONFIG is set and may load a kubeconfig
+	// that points at another API (e.g. host cluster), which breaks Node label lookups.
+	restCfg, err := rest.InClusterConfig()
 	if err != nil {
-		klog.Fatal(err)
+		klog.Fatalf("in-cluster Kubernetes config (DPU/tenant API): %v", err)
 	}
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		klog.Fatal(err)
 	}
