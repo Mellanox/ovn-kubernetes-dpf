@@ -333,6 +333,12 @@ spec:
           value: {{ default "" .Values.dpuManifests.vtepCIDR | quote }}
         - name: HOST_CIDR
           value: {{ default "" .Values.dpuManifests.hostCIDR | quote }}
+        - name: OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL
+          value: {{ .Values.dpuHealthCheck.renewInterval | quote }}
+        - name: OVNKUBE_NODE_DPU_LEASE_DURATION
+          value: {{ .Values.dpuHealthCheck.leaseDuration | quote }}
+        - name: OVNKUBE_NODE_LEASE_NAMESPACE
+          value: {{ default .Release.Namespace .Values.leaseNamespace | quote }}
         volumeMounts:
         {{- if .Values.dpuManifests.externalDHCP }}
         # Needed so that we can write netplan config files
@@ -816,10 +822,6 @@ spec:
           value: "dpu"
         - name: OVNKUBE_NODE_LEASE_NAMESPACE
           value: {{ default .Release.Namespace .Values.leaseNamespace }}
-        - name: OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL
-          value: {{ .Values.dpuHealthCheck.renewInterval | quote }}
-        - name: OVNKUBE_NODE_DPU_LEASE_DURATION
-          value: {{ .Values.dpuHealthCheck.leaseDuration | quote }}
         readinessProbe:
           httpGet:
             path: /metrics

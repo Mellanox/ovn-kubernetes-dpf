@@ -98,6 +98,8 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}()
 			Expect(err).NotTo(HaveOccurred())
 			provisioner.FileSystemRoot = tmpDir
+			provisioner.SetOVNConfigNamespaceForOVNConf("test-ovn-ns")
+			provisioner.SetDPUNodeLeaseForOVNConf(10, 40)
 			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
 			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
 			ovnInputPath := filepath.Join(ovnInputDirPath, "ovn_k8s.conf")
@@ -163,7 +165,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			ovnInputGatewayOpts, err := os.ReadFile(ovnInputPath)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(string(ovnInputGatewayOpts)).To(Equal("[Gateway]\nnext-hop=192.168.1.10\nrouter-subnet=192.168.1.0/24\n"))
+			Expect(string(ovnInputGatewayOpts)).To(Equal("[Gateway]\nnext-hop=192.168.1.10\nrouter-subnet=192.168.1.0/24\n\n[kubernetes]\novn-config-namespace=test-ovn-ns\n\n[ovnkubenode]\ndpu-node-lease-renew-interval=10\ndpu-node-lease-duration=40\n"))
 
 			Expect(fakeExec.CommandCalls).To(Equal(1))
 		})

@@ -137,6 +137,14 @@ func main() {
 
 	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
+	if ok, renew, dur, err := parseDPUNodeLeaseFromEnv(); err != nil {
+		klog.Fatal(err)
+	} else if ok {
+		provisioner.SetDPUNodeLeaseForOVNConf(renew, dur)
+	}
+	if ns := strings.TrimSpace(os.Getenv("OVNKUBE_NODE_LEASE_NAMESPACE")); ns != "" {
+		provisioner.SetOVNConfigNamespaceForOVNConf(ns)
+	}
 	if strings.TrimSpace(provisioner.K8sAPIServer) != "" {
 		hostClusterClient, err := newHostClusterClient(provisioner.K8sAPIServer)
 		if err != nil {
@@ -246,6 +254,35 @@ func getVTEPCIDR() (*net.IPNet, error) {
 	}
 
 	return vtepCIDR, nil
+}
+
+// parseDPUNodeLeaseFromEnv reads OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL and OVNKUBE_NODE_DPU_LEASE_DURATION.
+// When the renew interval env is unset, ok is false and ovn_k8s.conf is left without an [ovnkubenode] lease block.
+func parseDPUNodeLeaseFromEnv() (ok bool, renewInterval int, leaseDuration int, err error) {
+	renewRaw := strings.TrimSpace(os.Getenv("OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL"))
+	if renewRaw == "" {
+		return false, 0, 0, nil
+	}
+	renewInterval, err = strconv.Atoi(renewRaw)
+	if err != nil {
+		return false, 0, 0, fmt.Errorf("invalid OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL %q: %w", renewRaw, err)
+	}
+	durRaw := strings.TrimSpace(os.Getenv("OVNKUBE_NODE_DPU_LEASE_DURATION"))
+	if durRaw == "" {
+		leaseDuration = 40
+	} else {
+		leaseDuration, err = strconv.Atoi(durRaw)
+		if err != nil {
+			return false, 0, 0, fmt.Errorf("invalid OVNKUBE_NODE_DPU_LEASE_DURATION %q: %w", durRaw, err)
+		}
+	}
+	if leaseDuration <= 0 {
+		return false, 0, 0, fmt.Errorf("OVNKUBE_NODE_DPU_LEASE_DURATION must be > 0, got %d", leaseDuration)
+	}
+	if renewInterval > 0 && leaseDuration <= renewInterval {
+		return false, 0, 0, fmt.Errorf("OVNKUBE_NODE_DPU_LEASE_DURATION (%d) must be greater than OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL (%d)", leaseDuration, renewInterval)
+	}
+	return true, renewInterval, leaseDuration, nil
 }
 
 // getHostCIDR returns the Host CIDR to be used by the provisioner

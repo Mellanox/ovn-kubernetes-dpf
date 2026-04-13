@@ -145,6 +145,16 @@ type DPUCNIProvisioner struct {
 	mode Mode
 	// ovnMTU is the MTU that is configured for OVN
 	ovnMTU int
+
+	// writeDPUNodeLeaseToOVNKConf, when true, adds [ovnkubenode] dpu-node-lease-* keys to ovn_k8s.conf.
+	writeDPUNodeLeaseToOVNKConf bool
+	dpuNodeLeaseRenewInterval  int
+	dpuNodeLeaseDuration       int
+
+	// writeOVNKConfigNamespaceToOVNKConf, when true, adds [kubernetes] ovn-config-namespace to ovn_k8s.conf (upstream
+	// Kubernetes.OVNConfigNamespace; DPU leases and other config objects use this namespace).
+	writeOVNKConfigNamespaceToOVNKConf bool
+	ovnConfigNamespace               string
 }
 
 // New creates a DPUCNIProvisioner that can configure the system
@@ -190,6 +200,29 @@ func New(ctx context.Context,
 
 func (p *DPUCNIProvisioner) SetHostKubernetesClient(c client.Client) {
 	p.hostKubernetesClient = c
+}
+
+// SetDPUNodeLeaseForOVNConf configures ovnkube-node DPU lease intervals written into ovn_k8s.conf (see
+// dpu-node-lease-renew-interval / dpu-node-lease-duration in upstream ovn-kubernetes). Call before RunOnce or
+// EnsureConfiguration so writeFilesForOVN can emit an [ovnkubenode] section.
+func (p *DPUCNIProvisioner) SetDPUNodeLeaseForOVNConf(renewInterval, leaseDuration int) {
+	p.writeDPUNodeLeaseToOVNKConf = true
+	p.dpuNodeLeaseRenewInterval = renewInterval
+	p.dpuNodeLeaseDuration = leaseDuration
+}
+
+// SetOVNConfigNamespaceForOVNConf sets Kubernetes.OVNConfigNamespace (INI key ovn-config-namespace under [kubernetes])
+// in ovn_k8s.conf. Pass the namespace where OVN-Kubernetes coordination leases and related config live; empty string
+// clears the option so writeFilesForOVN omits the block.
+func (p *DPUCNIProvisioner) SetOVNConfigNamespaceForOVNConf(namespace string) {
+	ns := strings.TrimSpace(namespace)
+	if ns == "" {
+		p.writeOVNKConfigNamespaceToOVNKConf = false
+		p.ovnConfigNamespace = ""
+		return
+	}
+	p.writeOVNKConfigNamespaceToOVNKConf = true
+	p.ovnConfigNamespace = ns
 }
 
 // RunOnce runs the provisioning flow once and exits
@@ -505,6 +538,17 @@ func (p *DPUCNIProvisioner) writeFilesForOVN() error {
 		return fmt.Errorf("error while getting the gateway router subnet content: %w", err)
 	}
 	content += routerSubnetContent
+
+	if p.writeOVNKConfigNamespaceToOVNKConf {
+		content += "\n[kubernetes]\n"
+		content += "ovn-config-namespace=" + p.ovnConfigNamespace + "\n"
+	}
+
+	if p.writeDPUNodeLeaseToOVNKConf {
+		content += "\n[ovnkubenode]\n"
+		content += fmt.Sprintf("dpu-node-lease-renew-interval=%d\n", p.dpuNodeLeaseRenewInterval)
+		content += fmt.Sprintf("dpu-node-lease-duration=%d\n", p.dpuNodeLeaseDuration)
+	}
 
 	// Write the complete content to the file in one operation
 	err = os.WriteFile(configPath, []byte(content), 0644)
