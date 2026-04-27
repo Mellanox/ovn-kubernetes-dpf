@@ -735,6 +735,8 @@ spec:
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
           value: ""
+        - name: OVN_DISABLE_SNAT_GATEWAY_ROUTERS
+          value: {{ default "" .Values.global.disableSnatGatewayRouters | quote }}
         - name: OVN_DISABLE_FORWARDING
           value: ""
         - name: OVN_ENCAP_PORT

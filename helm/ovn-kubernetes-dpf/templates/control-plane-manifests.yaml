@@ -282,6 +282,8 @@ spec:
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
           value: ""
+        - name: OVN_DISABLE_SNAT_GATEWAY_ROUTERS
+          value: {{ default "" .Values.global.disableSnatGatewayRouters | quote }}
         - name: OVN_EMPTY_LB_EVENTS
           value: ""
         - name: OVN_V4_JOIN_SUBNET
