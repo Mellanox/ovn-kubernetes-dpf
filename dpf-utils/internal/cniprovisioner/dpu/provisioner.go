@@ -76,8 +76,9 @@ const (
 	// brOVN is the name of the bridge that is used by OVN as the external bridge (br-ex). This is the bridge that is
 	// later connected with br-sfc. In the current OVN IC w/ DPU implementation, the internal port of this bridge acts
 	// as the VTEP.
-	brOVN = "br-ovn"
-	brDPU = "br-dpu"
+	brOVN  = "br-ovn"
+	brDPU  = "br-dpu"
+	brVTEP = "br-vtep"
 
 	// ovnkInputPath is the path to the file in which ovnkube-controller expects the additional gateway opts
 	ovnkInputPath = "/etc/openvswitch/ovn_k8s.conf"
@@ -96,6 +97,24 @@ const (
 	// hostNodeChassisIDAnnotationKey is the host-cluster node annotation used by OVN to track the chassis identity.
 	hostNodeChassisIDAnnotationKey = "k8s.ovn.org/node-chassis-id"
 )
+
+// incrementIP returns the given IP address incremented by 1.
+func incrementIP(ip net.IP) net.IP {
+	if ip == nil {
+		return nil
+	}
+	// Make a copy to avoid modifying the original
+	result := make(net.IP, len(ip))
+	copy(result, ip)
+	// Increment the IP by 1
+	for i := len(result) - 1; i >= 0; i-- {
+		result[i]++
+		if result[i] != 0 {
+			break
+		}
+	}
+	return result
+}
 
 type DPUCNIProvisioner struct {
 	ctx                        context.Context
@@ -148,13 +167,13 @@ type DPUCNIProvisioner struct {
 
 	// writeDPUNodeLeaseToOVNKConf, when true, adds [ovnkubenode] dpu-node-lease-* keys to ovn_k8s.conf.
 	writeDPUNodeLeaseToOVNKConf bool
-	dpuNodeLeaseRenewInterval  int
-	dpuNodeLeaseDuration       int
+	dpuNodeLeaseRenewInterval   int
+	dpuNodeLeaseDuration        int
 
 	// writeOVNKConfigNamespaceToOVNKConf, when true, adds [kubernetes] ovn-config-namespace to ovn_k8s.conf (upstream
 	// Kubernetes.OVNConfigNamespace; DPU leases and other config objects use this namespace).
 	writeOVNKConfigNamespaceToOVNKConf bool
-	ovnConfigNamespace               string
+	ovnConfigNamespace                 string
 }
 
 // New creates a DPUCNIProvisioner that can configure the system
@@ -438,11 +457,15 @@ users:
 // so that traffic going through the geneve tunnels can function as expected.
 func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error {
 	if p.mode == InternalIPAM {
-		if err := p.setLinkIPAddressIfNotSet(brOVN, p.vtepIPNet); err != nil {
+		if err := p.setLinkIPAddressIfNotSet(brVTEP, p.vtepIPNet); err != nil {
 			return fmt.Errorf("error while setting VTEP IP: %w", err)
 		}
+		if err := p.networkHelper.SetLinkUp(brVTEP); err != nil {
+			return fmt.Errorf("error while setting link %s up: %w", brVTEP, err)
+		}
+
 		if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
-			return fmt.Errorf("error while setting link %s up: %w", brOVN, err)
+			return fmt.Errorf("error while setting link %s up: %w", brVTEP, err)
 		}
 
 		_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
@@ -453,8 +476,13 @@ func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error
 		if vtepNetwork.String() != p.vtepCIDR.String() {
 			// Add route related to traffic that needs to go from one Pod running on worker Node A to another Pod running
 			// on worker Node B.
-			if err := p.addRouteIfNotExists(p.vtepCIDR, p.gateway, brOVN, nil, nil); err != nil {
-				return fmt.Errorf("error while adding route %s %s %s: %w", p.vtepCIDR, p.gateway.String(), brOVN, err)
+			// Use the next IP after p.gateway as the gateway for this route
+			vtepGateway := incrementIP(p.gateway)
+			if vtepGateway == nil {
+				return fmt.Errorf("error while calculating gateway from p.gateway %s", p.gateway.String())
+			}
+			if err := p.addRouteIfNotExists(p.vtepCIDR, vtepGateway, brVTEP, nil, nil); err != nil {
+				return fmt.Errorf("error while adding route %s %s %s: %w", p.vtepCIDR, vtepGateway.String(), brVTEP, err)
 			}
 		}
 	}
