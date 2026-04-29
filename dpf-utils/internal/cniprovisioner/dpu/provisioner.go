@@ -481,7 +481,7 @@ func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error
 			if vtepGateway == nil {
 				return fmt.Errorf("error while calculating gateway from p.gateway %s", p.gateway.String())
 			}
-			if err := p.addRouteIfNotExists(p.vtepCIDR, vtepGateway, brVTEP, nil, nil); err != nil {
+			if err := p.addRouteIfNotExists(p.vtepCIDR, vtepGateway, brVTEP, nil, nil, false); err != nil {
 				return fmt.Errorf("error while adding route %s %s %s: %w", p.vtepCIDR, vtepGateway.String(), brVTEP, err)
 			}
 		}
@@ -494,7 +494,12 @@ func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error
 	// which gets a DHCP IP in that CIDR. Given that, we need to set the metric of this route to something very high
 	// so that it's the last preferred route in the route table for that CIDR. The reason for that is this OVS bug that
 	// selects the route with the highest prio - see issue 3871067.
-	if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil); err != nil {
+	if p.mode == InternalIPAM {
+		// Add onlink route via br-ovn since it does not have an IP anymore.
+		if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil, true); err != nil {
+			return fmt.Errorf("error while adding route %s %s %s: %w", p.hostCIDR, p.gateway.String(), brOVN, err)
+		}
+	} else if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil, false); err != nil {
 		return fmt.Errorf("error while adding route %s %s %s: %w", p.hostCIDR, p.gateway.String(), brOVN, err)
 	}
 
@@ -521,8 +526,8 @@ func (p *DPUCNIProvisioner) setLinkIPAddressIfNotSet(link string, ipNet *net.IPN
 	return nil
 }
 
-// addRouteIfNotExists adds a route if it doesn't already exist
-func (p *DPUCNIProvisioner) addRouteIfNotExists(network *net.IPNet, gateway net.IP, device string, metric *int, table *int) error {
+// addRouteIfNotExists adds a route if it doesn't already exist.
+func (p *DPUCNIProvisioner) addRouteIfNotExists(network *net.IPNet, gateway net.IP, device string, metric *int, table *int, onLink bool) error {
 	hasRoute, err := p.networkHelper.RouteExists(network, gateway, device, table)
 	if err != nil {
 		return fmt.Errorf("error checking whether route exists: %w", err)
@@ -531,7 +536,21 @@ func (p *DPUCNIProvisioner) addRouteIfNotExists(network *net.IPNet, gateway net.
 		klog.Infof("Route %s %s %s with metric %v in table %v exists, skipping configuration", network, gateway, device, metric, table)
 		return nil
 	}
-	if err := p.networkHelper.AddRoute(network, gateway, device, metric, table); err != nil {
+	if onLink {
+		args := []string{"route", "add", network.String(), "via", gateway.String(), "dev", device, "onlink"}
+		if metric != nil {
+			args = append(args, "metric", strconv.Itoa(*metric))
+		}
+		if table != nil {
+			args = append(args, "table", strconv.Itoa(*table))
+		}
+
+		cmd := p.exec.Command("ip", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("ip route add failed: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+	} else if err := p.networkHelper.AddRoute(network, gateway, device, metric, table); err != nil {
 		return fmt.Errorf("error adding route: %w", err)
 	}
 	return nil
@@ -800,7 +819,7 @@ func (p *DPUCNIProvisioner) configureSymmetricRouting() error {
 
 	// Add route referenced by the above rules
 	// ip route a table 60 10.0.120.0/22 via 10.0.110.254 dev br-comm-ch
-	if err := p.addRouteIfNotExists(p.vtepCIDR, defaultGateway, oobInterface, nil, ptr.To(sourceRoutingTable)); err != nil {
+	if err := p.addRouteIfNotExists(p.vtepCIDR, defaultGateway, oobInterface, nil, ptr.To(sourceRoutingTable), false); err != nil {
 		return fmt.Errorf("error while adding rule: %w", err)
 	}
 

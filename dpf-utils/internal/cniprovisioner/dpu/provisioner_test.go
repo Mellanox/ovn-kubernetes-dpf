@@ -19,6 +19,7 @@ package dpucniprovisioner_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -52,6 +53,25 @@ func newHostKubernetesClient(nodeName string) *corev1.Node {
 	}
 }
 
+func expectOnLinkRouteCommand(fakeExec *kexecTesting.FakeExec, network *net.IPNet, gateway net.IP, device string, metric int) {
+	fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
+		Expect(cmd).To(Equal("ip"))
+		Expect(args).To(Equal([]string{
+			"route",
+			"add",
+			network.String(),
+			"via",
+			gateway.String(),
+			"dev",
+			device,
+			"onlink",
+			"metric",
+			fmt.Sprint(metric),
+		}))
+		return kexec.New().Command("echo")
+	}))
+}
+
 var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 	Context("When it runs once for the first time", func() {
 		It("should configure the system fully when different subnets per DPU", func() {
@@ -77,6 +97,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			_, defaultRouteNetwork, err := net.ParseCIDR("0.0.0.0/0")
 			Expect(err).ToNot(HaveOccurred())
 			defaultGateway := net.ParseIP("10.0.100.254")
+			vtepGateway := net.ParseIP("192.168.1.11")
 			fakeNode := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
@@ -105,6 +126,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			ovnInputPath := filepath.Join(ovnInputDirPath, "ovn_k8s.conf")
 
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
+			expectOnLinkRouteCommand(fakeExec, hostCIDR, gateway, "br-ovn", 10000)
 			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
 				Expect(cmd).To(Equal("dnsmasq"))
 				Expect(args).To(Equal([]string{
@@ -122,13 +144,13 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				return kexec.New().Command("echo")
 			}))
 
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet)
-			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
-			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-ovn", nil, nil)
+			networkhelper.EXPECT().RouteExists(vtepCIDR, vtepGateway, "br-vtep", nil)
+			networkhelper.EXPECT().AddRoute(vtepCIDR, vtepGateway, "br-vtep", nil, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
 			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
@@ -167,7 +189,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(string(ovnInputGatewayOpts)).To(Equal("[Gateway]\nnext-hop=192.168.1.10\nrouter-subnet=192.168.1.0/24\n\n[kubernetes]\novn-config-namespace=test-ovn-ns\n\n[ovnkubenode]\ndpu-node-lease-renew-interval=10\ndpu-node-lease-duration=40\n"))
 
-			Expect(fakeExec.CommandCalls).To(Equal(1))
+			Expect(fakeExec.CommandCalls).To(Equal(2))
 		})
 		It("should configure the system fully when same subnet across DPUs", func() {
 			testCtrl := gomock.NewController(GinkgoT())
@@ -218,6 +240,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			ovnInputPath := filepath.Join(ovnInputDirPath, "ovn_k8s.conf")
 
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
+			expectOnLinkRouteCommand(fakeExec, hostCIDR, gateway, "br-ovn", 10000)
 			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
 				Expect(cmd).To(Equal("dnsmasq"))
 				Expect(args).To(Equal([]string{
@@ -238,11 +261,11 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			_, vtepNetwork, _ := net.ParseCIDR(vtepIPNet.String())
 			Expect(vtepNetwork.String()).To(Equal("192.168.1.0/24"))
 			Expect(vtepCIDR).To(Equal(vtepNetwork))
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet)
-			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
 			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
@@ -570,6 +593,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			_, defaultRouteNetwork, err := net.ParseCIDR("0.0.0.0/0")
 			Expect(err).ToNot(HaveOccurred())
 			defaultGateway := net.ParseIP("10.0.100.254")
+			vtepGateway := net.ParseIP("192.168.1.11")
 			fakeNode := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
@@ -594,19 +618,20 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			ovnInputDirPath := filepath.Join(tmpDir, "/etc/openvswitch")
 			Expect(os.MkdirAll(ovnInputDirPath, 0755)).To(Succeed())
 
+			expectOnLinkRouteCommand(fakeExec, hostCIDR, gateway, "br-ovn", 10000)
 			fakeExec.CommandScript = append(fakeExec.CommandScript, kexecTesting.FakeCommandAction(func(cmd string, args ...string) kexec.Cmd {
 				return kexec.New().Command("echo")
 			}))
 
 			By("Checking the first run")
 			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil).AnyTimes()
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet)
-			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
-			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-ovn", nil, nil)
+			networkhelper.EXPECT().RouteExists(vtepCIDR, vtepGateway, "br-vtep", nil)
+			networkhelper.EXPECT().AddRoute(vtepCIDR, vtepGateway, "br-vtep", nil, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
 			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
@@ -632,9 +657,10 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Checking the second run")
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet).Return(true, nil)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet).Return(true, nil)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
-			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-ovn", nil).Return(true, nil)
+			networkhelper.EXPECT().RouteExists(vtepCIDR, vtepGateway, "br-vtep", nil).Return(true, nil)
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
@@ -1074,7 +1100,7 @@ func networkHelperMockAll(networkHelper *networkhelperMock.MockNetworkHelper) {
 	networkHelper.EXPECT().GetLinkIPAddresses(gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().GetHostPFMACAddressDPU(gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().LinkIPAddressExists(gomock.Any(), gomock.Any()).AnyTimes()
-	networkHelper.EXPECT().RouteExists(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	networkHelper.EXPECT().RouteExists(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 	networkHelper.EXPECT().RuleExists(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().SetLinkIPAddress(gomock.Any(), gomock.Any()).AnyTimes()
 	networkHelper.EXPECT().SetLinkUp(gomock.Any()).AnyTimes()
