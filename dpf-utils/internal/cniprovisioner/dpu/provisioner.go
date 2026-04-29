@@ -116,6 +116,40 @@ func incrementIP(ip net.IP) net.IP {
 	return result
 }
 
+// getLastHostIP returns the last usable host IP address in a subnet as a *net.IPNet
+// with the same prefix length as the input.
+// For /31 subnets (RFC 3021 point-to-point), the last IP is returned as-is (no broadcast to exclude).
+// For /32 subnets, the single IP is returned.
+// For all other subnets, the broadcast address minus 1 is returned.
+func getLastHostIP(ipNet *net.IPNet) (*net.IPNet, error) {
+	if ipNet == nil {
+		return nil, errors.New("ipNet is nil")
+	}
+	ip := ipNet.IP.To4()
+	if ip == nil {
+		ip = ipNet.IP.To16()
+	}
+	// Compute the broadcast address by OR-ing IP with the inverse mask
+	broadcast := make(net.IP, len(ip))
+	for i := range ip {
+		broadcast[i] = ip[i] | ^ipNet.Mask[i]
+	}
+	// For subnets larger than /31, decrement to exclude the broadcast address
+	ones, _ := ipNet.Mask.Size()
+	if ones < 31 {
+		for i := len(broadcast) - 1; i >= 0; i-- {
+			broadcast[i]--
+			if broadcast[i] != 0xFF {
+				break
+			}
+		}
+	}
+	return &net.IPNet{
+		IP:   broadcast,
+		Mask: ipNet.Mask,
+	}, nil
+}
+
 type DPUCNIProvisioner struct {
 	ctx                        context.Context
 	clock                      clock.Clock
@@ -462,6 +496,14 @@ func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error
 		}
 		if err := p.networkHelper.SetLinkUp(brVTEP); err != nil {
 			return fmt.Errorf("error while setting link %s up: %w", brVTEP, err)
+		}
+		// get last address on the vtepIPNet subnet and assign it to brOVN
+		brOVNIPNet, err := getLastHostIP(p.vtepIPNet)
+		if err != nil {
+			return fmt.Errorf("error while calculating last host IP from VTEP subnet %s: %w", p.vtepIPNet, err)
+		}
+		if err := p.setLinkIPAddressIfNotSet(brOVN, brOVNIPNet); err != nil {
+			return fmt.Errorf("error while setting brOVN IP: %w", err)
 		}
 
 		if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
