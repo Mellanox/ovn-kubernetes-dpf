@@ -158,15 +158,15 @@ spec:
           [
             {
               "name": "vtep",
-              "poolName": "{{ .Values.dpuManifests.ipamPool }}",
-              "poolType": "{{ .Values.dpuManifests.ipamPoolType}}",
-              "allocateIPWithIndex": {{ .Values.dpuManifests.ipamVTEPIPIndex }}
+              "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.vtep.pool }}",
+              "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.vtep.poolType }}",
+              "allocateIPWithIndex": {{ default .Values.dpuManifests.ipamVTEPIPIndex .Values.dpuManifests.ipam.vtep.ipIndex }}
             },
             {
               "name": "pf",
-              "poolName": "{{ .Values.dpuManifests.ipamPool }}",
-              "poolType": "{{ .Values.dpuManifests.ipamPoolType}}",
-              "allocateIPWithIndex": {{ .Values.dpuManifests.ipamPFIPIndex }}
+              "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.hostInterface.pool }}",
+              "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.hostInterface.poolType }}",
+              "allocateIPWithIndex": {{ default .Values.dpuManifests.ipamPFIPIndex .Values.dpuManifests.ipam.hostInterface.ipIndex }}
             }
           ]
         {{- end }}
@@ -281,18 +281,24 @@ spec:
             - /var/run/readyz
           initialDelaySeconds: 30
         {{- if not .Values.dpuManifests.externalDHCP }}
-        # Liveness probe to check DHCP server health (only for internal IPAM mode)
-        livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - |
-              # Check if DHCP server is listening on UDP port 67
-              ss -uln | grep -q ':67 '
-          initialDelaySeconds: 90
-          periodSeconds: 30
-          failureThreshold: 3
+        # ┌──────────────────────────────────────────────────────────────────────────┐
+        # │ Liveness probe disabled: With split IPAM, DHCP for the host PF is now   │
+        # │ handled by HBN. The dnsmasq-based liveness probe is no longer needed.   │
+        # │                                                                          │
+        # │ NOTE: The DHCP server code in provisioner.go (startDHCPServer) has also  │
+        # │ been commented out. If DHCP is re-enabled there, re-enable this probe.  │
+        # └──────────────────────────────────────────────────────────────────────────┘
+        # livenessProbe:
+        #   exec:
+        #     command:
+        #     - /bin/sh
+        #     - -c
+        #     - |
+        #       # Check if DHCP server is listening on UDP port 67
+        #       ss -uln | grep -q ':67 '
+        #   initialDelaySeconds: 90
+        #   periodSeconds: 30
+        #   failureThreshold: 3
         {{- end }}
         securityContext:
           privileged: true
@@ -330,9 +336,11 @@ spec:
               key: mtu
         {{- end }}
         - name: VTEP_CIDR
-          value: {{ default "" .Values.dpuManifests.vtepCIDR | quote }}
+          value: {{ default .Values.dpuManifests.vtepCIDR .Values.dpuManifests.ipam.vtep.cidr | default "" | quote }}
         - name: HOST_CIDR
           value: {{ default "" .Values.dpuManifests.hostCIDR | quote }}
+        - name: HOST_INTERFACE_CIDR
+          value: {{ default "" .Values.dpuManifests.ipam.hostInterface.cidr | quote }}
         - name: OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL
           value: {{ .Values.dpuHealthCheck.renewInterval | quote }}
         - name: OVNKUBE_NODE_DPU_LEASE_DURATION

@@ -76,8 +76,9 @@ const (
 	// brOVN is the name of the bridge that is used by OVN as the external bridge (br-ex). This is the bridge that is
 	// later connected with br-sfc. In the current OVN IC w/ DPU implementation, the internal port of this bridge acts
 	// as the VTEP.
-	brOVN = "br-ovn"
-	brDPU = "br-dpu"
+	brOVN  = "br-ovn"
+	brDPU  = "br-dpu"
+	brVTEP = "br-vtep"
 
 	// ovnkInputPath is the path to the file in which ovnkube-controller expects the additional gateway opts
 	ovnkInputPath = "/etc/openvswitch/ovn_k8s.conf"
@@ -133,6 +134,12 @@ type DPUCNIProvisioner struct {
 	hostCIDR *net.IPNet
 	// pfIP is the IP that should be added to the PF on the host
 	pfIP *net.IPNet
+	// pfGateway is the gateway IP from the host interface pool allocation. Used for routing traffic
+	// destined to the host interface CIDR (e.g. 10.0.120.0/24) via br-ovn.
+	pfGateway net.IP
+	// hostInterfaceCIDR is the aggregate CIDR of the host interface pool (e.g. 10.0.120.0/24).
+	// This is used for routing and symmetric routing configuration.
+	hostInterfaceCIDR *net.IPNet
 	// dpuHostName is the name of the DPU.
 	dpuHostName string
 	// gatewayDiscoveryNetwork is the network from which the DPUCNIProvisioner discovers the gateway that it should be
@@ -148,13 +155,13 @@ type DPUCNIProvisioner struct {
 
 	// writeDPUNodeLeaseToOVNKConf, when true, adds [ovnkubenode] dpu-node-lease-* keys to ovn_k8s.conf.
 	writeDPUNodeLeaseToOVNKConf bool
-	dpuNodeLeaseRenewInterval  int
-	dpuNodeLeaseDuration       int
+	dpuNodeLeaseRenewInterval   int
+	dpuNodeLeaseDuration        int
 
 	// writeOVNKConfigNamespaceToOVNKConf, when true, adds [kubernetes] ovn-config-namespace to ovn_k8s.conf (upstream
 	// Kubernetes.OVNConfigNamespace; DPU leases and other config objects use this namespace).
 	writeOVNKConfigNamespaceToOVNKConf bool
-	ovnConfigNamespace               string
+	ovnConfigNamespace                 string
 }
 
 // New creates a DPUCNIProvisioner that can configure the system
@@ -170,6 +177,8 @@ func New(ctx context.Context,
 	vtepCIDR *net.IPNet,
 	hostCIDR *net.IPNet,
 	pfIP *net.IPNet,
+	pfGateway net.IP,
+	hostInterfaceCIDR *net.IPNet,
 	dpuHostName string,
 	gatewayDiscoveryNetwork *net.IPNet,
 	ovnMTU int,
@@ -191,6 +200,8 @@ func New(ctx context.Context,
 		vtepCIDR:                   vtepCIDR,
 		hostCIDR:                   hostCIDR,
 		pfIP:                       pfIP,
+		pfGateway:                  pfGateway,
+		hostInterfaceCIDR:          hostInterfaceCIDR,
 		dpuHostName:                dpuHostName,
 		mode:                       mode,
 		gatewayDiscoveryNetwork:    gatewayDiscoveryNetwork,
@@ -231,21 +242,34 @@ func (p *DPUCNIProvisioner) RunOnce() error {
 		return err
 	}
 	klog.Info("Configuration complete.")
-	if p.mode == InternalIPAM {
-		if err := p.startDHCPServer(); err != nil {
-			return fmt.Errorf("error while starting DHCP server: %w", err)
-		}
-		klog.Info("DHCP Server started.")
-	}
+
+	// ┌──────────────────────────────────────────────────────────────────────────┐
+	// │ DHCP server disabled: With split IPAM, DHCP for the host PF is now     │
+	// │ handled by HBN. The code below is commented out but retained in case   │
+	// │ it needs to be restored in a different form.                           │
+	// │                                                                        │
+	// │ NOTE: The liveness probe in the Helm chart (dpu-manifests.yaml) that   │
+	// │ checks for dnsmasq on UDP port 67 has also been commented out.         │
+	// │ If DHCP is re-enabled here, re-enable the liveness probe as well.     │
+	// └──────────────────────────────────────────────────────────────────────────┘
+	// if p.mode == InternalIPAM {
+	// 	if err := p.startDHCPServer(); err != nil {
+	// 		return fmt.Errorf("error while starting DHCP server: %w", err)
+	// 	}
+	// 	klog.Info("DHCP Server started.")
+	// }
 
 	return nil
 }
 
 // Stop stops the provisioner
 func (p *DPUCNIProvisioner) Stop() {
-	if p.mode == InternalIPAM {
-		p.dhcpCmd.Stop()
-	}
+	// ┌──────────────────────────────────────────────────────────────────────────┐
+	// │ DHCP server disabled: see RunOnce() for details.                       │
+	// └──────────────────────────────────────────────────────────────────────────┘
+	// if p.mode == InternalIPAM {
+	// 	p.dhcpCmd.Stop()
+	// }
 
 	klog.Info("Provisioner stopped")
 }
@@ -434,40 +458,38 @@ users:
 	return nil
 }
 
-// configurePodToPodOnDifferentNodeConnectivity configures the VTEP interface (br-ovn) and the ovn-encap-ip external ID
+// configurePodToPodOnDifferentNodeConnectivity configures the VTEP interface (br-vtep) and the ovn-encap-ip external ID
 // so that traffic going through the geneve tunnels can function as expected.
 func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error {
 	if p.mode == InternalIPAM {
-		if err := p.setLinkIPAddressIfNotSet(brOVN, p.vtepIPNet); err != nil {
-			return fmt.Errorf("error while setting VTEP IP: %w", err)
+		// Assign VTEP IP to br-vtep
+		if err := p.setLinkIPAddressIfNotSet(brVTEP, p.vtepIPNet); err != nil {
+			return fmt.Errorf("error while setting VTEP IP on %s: %w", brVTEP, err)
 		}
+		if err := p.networkHelper.SetLinkUp(brVTEP); err != nil {
+			return fmt.Errorf("error while setting link %s up: %w", brVTEP, err)
+		}
+
+		// br-ovn has no IP assigned — HBN owns the host interface IPs.
+		// Just bring the bridge up so it can forward traffic.
 		if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
 			return fmt.Errorf("error while setting link %s up: %w", brOVN, err)
 		}
 
-		_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
-		if err != nil {
-			return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
+		// Add VTEP aggregate route: e.g. 10.0.130.0/24 via <vtep gateway> dev br-vtep
+		// This enables traffic from one Pod on worker Node A to reach another Pod on worker Node B
+		// by routing through the VTEP network.
+		if err := p.addRouteIfNotExists(p.vtepCIDR, p.gateway, brVTEP, nil, nil); err != nil {
+			return fmt.Errorf("error while adding VTEP route %s via %s dev %s: %w", p.vtepCIDR, p.gateway.String(), brVTEP, err)
 		}
 
-		if vtepNetwork.String() != p.vtepCIDR.String() {
-			// Add route related to traffic that needs to go from one Pod running on worker Node A to another Pod running
-			// on worker Node B.
-			if err := p.addRouteIfNotExists(p.vtepCIDR, p.gateway, brOVN, nil, nil); err != nil {
-				return fmt.Errorf("error while adding route %s %s %s: %w", p.vtepCIDR, p.gateway.String(), brOVN, err)
-			}
-		}
-	}
-
-	// Add route related to traffic that needs to go from one Pod running on worker Node A to another Pod running on
-	// control plane A (and vice versa).
-	//
-	// In our setup, we will already have a route pointing to the same CIDR via the SF designated for kubelet traffic
-	// which gets a DHCP IP in that CIDR. Given that, we need to set the metric of this route to something very high
-	// so that it's the last preferred route in the route table for that CIDR. The reason for that is this OVS bug that
-	// selects the route with the highest prio - see issue 3871067.
-	if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil); err != nil {
-		return fmt.Errorf("error while adding route %s %s %s: %w", p.hostCIDR, p.gateway.String(), brOVN, err)
+		// TODO: REVIEW — determine if a host interface aggregate route is needed on the DPU side.
+		// If br-ovn has no IP, a device-only route (no next-hop) would be required, but ARP
+		// resolution may not work without an IP on the interface. Revisit once HBN-side
+		// routing and DHCP configuration is finalized.
+		// if err := p.addRouteIfNotExists(p.hostInterfaceCIDR, nil, brOVN, nil, nil); err != nil {
+		// 	return fmt.Errorf("error while adding host interface route %s dev %s: %w", p.hostInterfaceCIDR, brOVN, err)
+		// }
 	}
 
 	if err := p.ovsClient.SetOVNEncapIP(p.vtepIPNet.IP); err != nil {
@@ -592,17 +614,17 @@ func (p *DPUCNIProvisioner) configureBROVN() error {
 // writeOVNInputGatewayOptsFile returns the gateway options content
 // that ovnkube-controller reads from.
 func (p *DPUCNIProvisioner) writeOVNInputGatewayOptsFile() string {
-	return "next-hop=" + p.gateway.String() + "\n"
+	return "next-hop=" + p.pfGateway.String() + "\n"
 }
 
 // writeOVNInputRouterSubnetPath returns the Gateway Router Subnet content
 // that kubeovn-controller reads.
 func (p *DPUCNIProvisioner) writeOVNInputRouterSubnetPath() (string, error) {
-	_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
+	_, hostInterfaceNetwork, err := net.ParseCIDR(p.pfIP.String())
 	if err != nil {
-		return "", fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
+		return "", fmt.Errorf("error while parsing network from host interface IP %s: %w", p.pfIP.String(), err)
 	}
-	return "router-subnet=" + vtepNetwork.String() + "\n", nil
+	return "router-subnet=" + hostInterfaceNetwork.String() + "\n", nil
 }
 
 // writeNetplanFileForBROVN writes a netplan file for br-ovn to request dhcp
@@ -666,52 +688,63 @@ func (p *DPUCNIProvisioner) runNetplanApply() error {
 
 // startDHCPServer starts a DHCP Server to enable the PF on the host to get an IP.
 func (p *DPUCNIProvisioner) startDHCPServer() error {
-	if p.dhcpCmd != nil {
-		klog.Warning("DHCP Server already running")
-		return nil
-	}
+	// ┌──────────────────────────────────────────────────────────────────────────┐
+	// │ DHCP server disabled: With split IPAM, DHCP for the host PF is now     │
+	// │ handled by HBN. The code below is commented out but retained in case   │
+	// │ it needs to be restored in a different form.                           │
+	// │                                                                        │
+	// │ NOTE: The liveness probe in the Helm chart (dpu-manifests.yaml) that   │
+	// │ checks for dnsmasq on UDP port 67 has also been commented out.         │
+	// │ If DHCP is re-enabled here, re-enable the liveness probe as well.     │
+	// └──────────────────────────────────────────────────────────────────────────┘
 
-	_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
-	if err != nil {
-		return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
-	}
+	// if p.dhcpCmd != nil {
+	// 	klog.Warning("DHCP Server already running")
+	// 	return nil
+	// }
+	//
+	// _, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
+	// if err != nil {
+	// 	return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
+	// }
+	//
+	// mac, err := p.networkHelper.GetHostPFMACAddressDPU("0")
+	// if err != nil {
+	// 	return fmt.Errorf("error while parsing MAC address of the PF on the host: %w", err)
+	// }
+	//
+	// // Add the geneve header size to the MTU.
+	// pfMTU := p.ovnMTU + geneveHeaderSize
+	//
+	// if pfMTU == geneveHeaderSize || pfMTU > maxMTUSize {
+	// 	return errors.New("invalid PF MTU: it must be greater than 60 and less than or equal to 9216")
+	// }
+	//
+	// args := []string{
+	// 	"--keep-in-foreground",
+	// 	"--port=0",         // Disable DNS Server
+	// 	"--log-facility=-", // Log to stderr
+	// 	fmt.Sprintf("--interface=%s", brOVN),
+	// 	"--dhcp-option=option:router",
+	// 	fmt.Sprintf("--dhcp-option=option:mtu,%d", pfMTU),
+	// 	fmt.Sprintf("--dhcp-range=%s,static", vtepNetwork.IP.String()),
+	// 	fmt.Sprintf("--dhcp-host=%s,%s", mac, p.pfIP.IP.String()),
+	// }
+	//
+	// if vtepNetwork.String() != p.vtepCIDR.String() {
+	// 	args = append(args, fmt.Sprintf("--dhcp-option=option:classless-static-route,%s,%s", p.vtepCIDR.String(), p.gateway.String()))
+	// }
+	//
+	// cmd := p.exec.Command("dnsmasq", args...)
+	//
+	// cmd.SetStdout(os.Stdout)
+	// cmd.SetStderr(os.Stderr)
+	// if err := cmd.Start(); err != nil {
+	// 	return fmt.Errorf("error while starting the DHCP server: %w", err)
+	// }
+	//
+	// p.dhcpCmd = cmd
 
-	mac, err := p.networkHelper.GetHostPFMACAddressDPU("0")
-	if err != nil {
-		return fmt.Errorf("error while parsing MAC address of the PF on the host: %w", err)
-	}
-
-	// Add the geneve header size to the MTU.
-	pfMTU := p.ovnMTU + geneveHeaderSize
-
-	if pfMTU == geneveHeaderSize || pfMTU > maxMTUSize {
-		return errors.New("invalid PF MTU: it must be greater than 60 and less than or equal to 9216")
-	}
-
-	args := []string{
-		"--keep-in-foreground",
-		"--port=0",         // Disable DNS Server
-		"--log-facility=-", // Log to stderr
-		fmt.Sprintf("--interface=%s", brOVN),
-		"--dhcp-option=option:router",
-		fmt.Sprintf("--dhcp-option=option:mtu,%d", pfMTU),
-		fmt.Sprintf("--dhcp-range=%s,static", vtepNetwork.IP.String()),
-		fmt.Sprintf("--dhcp-host=%s,%s", mac, p.pfIP.IP.String()),
-	}
-
-	if vtepNetwork.String() != p.vtepCIDR.String() {
-		args = append(args, fmt.Sprintf("--dhcp-option=option:classless-static-route,%s,%s", p.vtepCIDR.String(), p.gateway.String()))
-	}
-
-	cmd := p.exec.Command("dnsmasq", args...)
-
-	cmd.SetStdout(os.Stdout)
-	cmd.SetStderr(os.Stderr)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("error while starting the DHCP server: %w", err)
-	}
-
-	p.dhcpCmd = cmd
 	return nil
 }
 
@@ -774,6 +807,14 @@ func (p *DPUCNIProvisioner) configureSymmetricRouting() error {
 	// ip route a table 60 10.0.120.0/22 via 10.0.110.254 dev br-comm-ch
 	if err := p.addRouteIfNotExists(p.vtepCIDR, defaultGateway, oobInterface, nil, ptr.To(sourceRoutingTable)); err != nil {
 		return fmt.Errorf("error while adding rule: %w", err)
+	}
+
+	// TODO: REVIEW — confirm host interface CIDR needs symmetric routing via OOB
+	// ip route a table 60 10.0.120.0/24 via 10.0.110.254 dev br-comm-ch
+	if p.hostInterfaceCIDR != nil {
+		if err := p.addRouteIfNotExists(p.hostInterfaceCIDR, defaultGateway, oobInterface, nil, ptr.To(sourceRoutingTable)); err != nil {
+			return fmt.Errorf("error while adding symmetric route for host interface CIDR: %w", err)
+		}
 	}
 
 	return nil

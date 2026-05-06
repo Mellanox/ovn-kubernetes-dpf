@@ -80,6 +80,8 @@ func main() {
 	var vtepIPNet *net.IPNet
 	var gateway net.IP
 	var pfIPNet *net.IPNet
+	var pfGateway net.IP
+	var hostInterfaceCIDR *net.IPNet
 	var vtepCIDR *net.IPNet
 	var ovnMTU int
 	var gatewayDiscoveryNetwork *net.IPNet
@@ -89,9 +91,9 @@ func main() {
 			klog.Fatalf("error while parsing info from the VTEP IP allocation file: %s", err.Error())
 		}
 
-		pfIPNet, err = getPFIP()
+		pfIPNet, pfGateway, err = getInfoFromPFIPAllocation()
 		if err != nil {
-			klog.Fatalf("error while the PF IP from the allocation file: %s", err.Error())
+			klog.Fatalf("error while parsing info from the PF IP allocation file: %s", err.Error())
 		}
 
 		ovnMTU, err = getOVNMTU()
@@ -108,6 +110,11 @@ func main() {
 	vtepCIDR, err = getVTEPCIDR()
 	if err != nil {
 		klog.Fatalf("error while parsing VTEP CIDR: %s", err.Error())
+	}
+
+	hostInterfaceCIDR, err = getHostInterfaceCIDR()
+	if err != nil {
+		klog.Fatalf("error while parsing Host Interface CIDR: %s", err.Error())
 	}
 
 	hostCIDR, err := getHostCIDR()
@@ -137,7 +144,7 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
+	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, pfGateway, hostInterfaceCIDR, node, gatewayDiscoveryNetwork, ovnMTU)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
 	if ok, renew, dur, err := parseDPUNodeLeaseFromEnv(); err != nil {
 		klog.Fatal(err)
@@ -217,30 +224,36 @@ func getInfoFromVTEPIPAllocation() (*net.IPNet, net.IP, error) {
 	return vtepIP, gateway, nil
 }
 
-// getPFIP() returns the PF IP from a file that contains the PF IP allocation done by the IP Allocator
-// component.
-func getPFIP() (*net.IPNet, error) {
+// getInfoFromPFIPAllocation returns the PF IP and gateway from a file that contains the PF IP allocation done
+// by the IP Allocator component.
+func getInfoFromPFIPAllocation() (*net.IPNet, net.IP, error) {
 	content, err := os.ReadFile(pfIPAllocationFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("error while reading file %s: %w", vtepIPAllocationFilePath, err)
+		return nil, nil, fmt.Errorf("error while reading file %s: %w", pfIPAllocationFilePath, err)
 	}
 
 	results := []ipallocator.NVIPAMIPAllocatorResult{}
 	if err := json.Unmarshal(content, &results); err != nil {
-		return nil, fmt.Errorf("error while unmarshalling IP Allocator results: %w", err)
+		return nil, nil, fmt.Errorf("error while unmarshalling IP Allocator results: %w", err)
 	}
 
 	if len(results) != 1 {
-		return nil, fmt.Errorf("expecting exactly 1 IP allocation for PF")
+		return nil, nil, fmt.Errorf("expecting exactly 1 IP allocation for PF")
 	}
 
 	pfIPRaw := results[0].IP
 	pfIP, err := netlink.ParseIPNet(pfIPRaw)
 	if err != nil {
-		return nil, fmt.Errorf("error while parsing PF IP to net.IPNet: %w", err)
+		return nil, nil, fmt.Errorf("error while parsing PF IP to net.IPNet: %w", err)
 	}
 
-	return pfIP, nil
+	gatewayRaw := results[0].Gateway
+	gateway := net.ParseIP(gatewayRaw)
+	if gateway == nil {
+		return nil, nil, errors.New("error while parsing PF Gateway IP to net.IP: input is not valid")
+	}
+
+	return pfIP, gateway, nil
 }
 
 // getVTEPCIDR returns the VTEP CIDR to be used by the provisioner
@@ -298,6 +311,21 @@ func getHostCIDR() (*net.IPNet, error) {
 	}
 
 	return hostCIDR, nil
+}
+
+// getHostInterfaceCIDR returns the Host Interface CIDR to be used by the provisioner
+func getHostInterfaceCIDR() (*net.IPNet, error) {
+	hostInterfaceCIDRRaw := os.Getenv("HOST_INTERFACE_CIDR")
+	if hostInterfaceCIDRRaw == "" {
+		return nil, errors.New("required HOST_INTERFACE_CIDR environment variable is not set")
+	}
+
+	_, hostInterfaceCIDR, err := net.ParseCIDR(hostInterfaceCIDRRaw)
+	if err != nil {
+		klog.Fatalf("error while parsing Host Interface CIDR %s as net.IPNet: %s", hostInterfaceCIDRRaw, err.Error())
+	}
+
+	return hostInterfaceCIDR, nil
 }
 
 func newHostClusterClient(apiServer string) (client.Client, error) {

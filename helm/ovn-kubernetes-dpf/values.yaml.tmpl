@@ -56,6 +56,18 @@ dpuManifests:
   ipamPoolType: null # user needs to populate based on DPUServiceIPAM
   ipamVTEPIPIndex: 0
   ipamPFIPIndex: 1
+  # New split IPAM configuration (optional, takes precedence over legacy values above when set)
+  ipam:
+    vtep:
+      cidr: null # e.g. "10.0.130.0/24" - VTEP network CIDR from DPUServiceIPAM
+      pool: null # e.g. "vtep-pool" - DPUServiceIPAM pool name for VTEP
+      poolType: null # e.g. "cidrpool" - DPUServiceIPAM pool type for VTEP
+      ipIndex: null # e.g. 1 - IP index to allocate from VTEP pool
+    hostInterface:
+      cidr: null # e.g. "10.0.120.0/24" - Host interface network CIDR from DPUServiceIPAM
+      pool: null # e.g. "host-pool" - DPUServiceIPAM pool name for host interface
+      poolType: null # e.g. "cidrpool" - DPUServiceIPAM pool type for host interface
+      ipIndex: null # e.g. 1 - IP index to allocate from host interface pool
   externalDHCP: false
   gatewayDiscoveryNetwork: "169.254.99.100/32" # This is a "dummy" subnet used to get the default gateway address from DHCP server (via option 121)
   cniBinDir: "/opt/cni/bin"
