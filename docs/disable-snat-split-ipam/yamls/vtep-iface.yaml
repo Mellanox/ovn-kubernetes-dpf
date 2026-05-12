@@ -1,0 +1,17 @@
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceInterface
+metadata:
+  name: vtep
+  namespace: dpf-operator-system
+spec:
+  template:
+    spec:
+      template:
+        metadata:
+          labels:
+            port: vtep
+        spec:
+          interfaceType: patch
+          patch:
+            peerBridge: br-vtep
