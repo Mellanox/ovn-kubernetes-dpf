@@ -43,6 +43,15 @@ controllerManager:
     effect: NoSchedule
 resourceName: ""
 nadName: dpf-ovn-kubernetes
+# -- Per-runtimeClass NAD mappings. Each entry creates an additional NetworkAttachmentDefinition and maps a
+# runtimeClassName to it. Pods with a matching runtimeClass use the mapped NAD (and its resourceName) instead of
+# the default nadName/resourceName. Format: list of {runtimeClass, nadName, resourceName}.
+# Example:
+# runtimeClassMappings:
+#   - runtimeClass: kata-qemu
+#     nadName: dpf-ovn-kubernetes-kata-qemu
+#     resourceName: nvidia.com/bf3-p0-kata-vfs
+runtimeClassMappings: []
 # -- The label that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection.
 # Format: key=value
 dpuHostLabel: k8s.ovn.org/dpu-host=

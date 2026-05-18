@@ -5,7 +5,7 @@ metadata:
   name: {{ .Values.nadName }}
   namespace: {{ .Release.Namespace }}
   annotations:
-    k8s.v1.cni.cncf.io/resourceName: {{ .Values.resourceName }} 
+    k8s.v1.cni.cncf.io/resourceName: {{ .Values.resourceName }}
 spec:
   config: '{
     "cniVersion" : "0.4.0",
@@ -17,4 +17,24 @@ spec:
     "logfile-maxbackups": 5,
     "logfile-maxage": 5
     }'
-
+{{- range .Values.runtimeClassMappings }}
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: {{ .nadName }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: {{ .resourceName }}
+spec:
+  config: '{
+    "cniVersion" : "0.4.0",
+    "name" : "ovn-primary",
+    "type" : "ovn-k8s-cni-overlay",
+    "logFile": "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+    "logLevel": "5",
+    "logfile-maxsize": 100,
+    "logfile-maxbackups": 5,
+    "logfile-maxage": 5
+    }'
+{{- end }}
