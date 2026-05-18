@@ -49,6 +49,9 @@ type NetworkInjectorSettings struct {
 	// NADNamespace is the namespace of the network attachment definition that the injector should use to configure VFs
 	// for the default network
 	NADNamespace string
+	// RuntimeClassNADMappings maps a pod runtimeClassName to a NAD name. Pods whose runtimeClass matches a key use
+	// the mapped NAD; all others fall through to NADName (the default).
+	RuntimeClassNADMappings map[string]string
 	// DPUHostLabelKey is the label key that indicates a node has a DPU, runs OVNK in dpu-host mode and needs VF injection
 	DPUHostLabelKey string
 	// DPUHostLabelValue is the label value of DPUHostLabelKey
@@ -100,15 +103,18 @@ func (webhook *NetworkInjector) Default(ctx context.Context, obj runtime.Object)
 		return nil
 	}
 
+	// Resolve which NAD to use based on the pod's runtimeClassName.
+	nadName := webhook.resolveNADName(pod)
+
 	// Get VF resource name early to check if pod already has resources
-	vfResourceName, err := getVFResourceName(ctx, webhook.Client, webhook.Settings.NADName, webhook.Settings.NADNamespace)
+	vfResourceName, err := getVFResourceName(ctx, webhook.Client, nadName, webhook.Settings.NADNamespace)
 	if err != nil {
 		return fmt.Errorf("error while getting VF resource name: %w", err)
 	}
 
 	// If pod already has VF resources, inject without checking affinity
 	if podHasVFResources(pod, vfResourceName) {
-		return injectNetworkResources(ctx, pod, webhook.Settings.NADName, webhook.Settings.NADNamespace, vfResourceName)
+		return injectNetworkResources(ctx, pod, nadName, webhook.Settings.NADNamespace, vfResourceName)
 	}
 
 	// Determine if injection should be skipped and if node affinity should be added for non-DPU workers
@@ -126,7 +132,18 @@ func (webhook *NetworkInjector) Default(ctx context.Context, obj runtime.Object)
 		return nil
 	}
 
-	return injectNetworkResources(ctx, pod, webhook.Settings.NADName, webhook.Settings.NADNamespace, vfResourceName)
+	return injectNetworkResources(ctx, pod, nadName, webhook.Settings.NADNamespace, vfResourceName)
+}
+
+// resolveNADName returns the NAD name to use for the given pod. If the pod has a runtimeClassName that matches an
+// entry in RuntimeClassNADMappings, the mapped NAD name is returned; otherwise NADName is used as the default.
+func (webhook *NetworkInjector) resolveNADName(pod *corev1.Pod) string {
+	if pod.Spec.RuntimeClassName != nil && *pod.Spec.RuntimeClassName != "" {
+		if mapped, ok := webhook.Settings.RuntimeClassNADMappings[*pod.Spec.RuntimeClassName]; ok {
+			return mapped
+		}
+	}
+	return webhook.Settings.NADName
 }
 
 // getVFResourceName gets the resource name that relates to the VFs that should be injected.
