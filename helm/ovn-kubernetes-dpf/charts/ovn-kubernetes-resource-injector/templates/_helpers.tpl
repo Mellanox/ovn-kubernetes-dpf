@@ -83,6 +83,9 @@ The args to be passed to the webhook
 {{- $args = append $args (printf "--prioritize-offloading=%t" .Values.prioritizeOffloading) }}
 {{- $args = append $args (printf "--webhook-port=%d" (int .Values.controllerManager.webhookPort)) }}
 {{- $args = append $args (printf "--health-probe-bind-address=%s" (.Values.controllerManager.healthProbeBindAddress | toString)) }}
+{{- range .Values.runtimeClassMappings }}
+{{- $args = append $args (printf "--runtime-class-nad-mapping=%s=%s" .runtimeClass .nadName) }}
+{{- end }}
 {{- toYaml $args }}
 {{- end }}
 
