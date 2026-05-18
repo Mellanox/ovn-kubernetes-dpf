@@ -64,17 +64,20 @@ func parseLabelFlag(label string) (key string, value string, err error) {
 }
 
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var syncPeriod time.Duration
-	var nadName string
-	var nadNamespace string
-	var dpuHostLabel string
-	var prioritizeOffloading bool
-	var webhookPort int
+	var (
+		metricsAddr                 string
+		enableLeaderElection        bool
+		probeAddr                   string
+		secureMetrics               bool
+		enableHTTP2                 bool
+		syncPeriod                  time.Duration
+		nadName                     string
+		nadNamespace                string
+		dpuHostLabel                string
+		prioritizeOffloading        bool
+		webhookPort                 int
+		runtimeClassNADMappingFlags []string
+	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -96,6 +99,12 @@ func main() {
 	flag.BoolVar(&prioritizeOffloading, "prioritize-offloading", true,
 		"When enabled, injects VFs when pod selectors match both nodes with and without the DPU label")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server binds to.")
+	flag.Func("runtime-class-nad-mapping",
+		"Map a runtimeClassName to a NAD name (format: runtimeClass=nadName). May be repeated for multiple mappings.",
+		func(s string) error {
+			runtimeClassNADMappingFlags = append(runtimeClassNADMappingFlags, s)
+			return nil
+		})
 
 	opts := zap.Options{
 		Development: true,
@@ -110,6 +119,17 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "invalid dpu-host-label flag")
 		os.Exit(1)
+	}
+
+	// Parse each --runtime-class-nad-mapping flag into the map
+	runtimeClassNADMappings := make(map[string]string, len(runtimeClassNADMappingFlags))
+	for _, mapping := range runtimeClassNADMappingFlags {
+		runtimeClass, nadMappedName, err := parseLabelFlag(mapping)
+		if err != nil {
+			setupLog.Error(err, "invalid runtime-class-nad-mapping flag", "value", mapping)
+			os.Exit(1)
+		}
+		runtimeClassNADMappings[runtimeClass] = nadMappedName
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -167,11 +187,12 @@ func main() {
 	if err = (&webhooks.NetworkInjector{
 		Client: mgr.GetClient(),
 		Settings: webhooks.NetworkInjectorSettings{
-			NADName:              nadName,
-			NADNamespace:         nadNamespace,
-			DPUHostLabelKey:      dpuHostLabelKey,
-			DPUHostLabelValue:    dpuHostLabelValue,
-			PrioritizeOffloading: prioritizeOffloading,
+			NADName:                 nadName,
+			NADNamespace:            nadNamespace,
+			RuntimeClassNADMappings: runtimeClassNADMappings,
+			DPUHostLabelKey:         dpuHostLabelKey,
+			DPUHostLabelValue:       dpuHostLabelValue,
+			PrioritizeOffloading:    prioritizeOffloading,
 		},
 	}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DPFOperatorConfig")

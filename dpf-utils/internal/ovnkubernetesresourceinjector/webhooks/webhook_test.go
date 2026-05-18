@@ -970,6 +970,180 @@ func setSelectorTerms(pod *corev1.Pod, terms []corev1.NodeSelectorTerm) {
 		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
 }
 
+func TestNetworkInjector_RuntimeClassMapping(t *testing.T) {
+	defaultResourceName := corev1.ResourceName("default-resource")
+	kataResourceName := corev1.ResourceName("kata-qemu-resource")
+
+	defaultNADName := "dpf-ovn-kubernetes"
+	kataNADName := "dpf-ovn-kubernetes-kata-qemu"
+	nadNamespace := "ovn-kubernetes"
+	kataRuntimeClass := "kata-qemu"
+	unknownRuntimeClass := "unknown-runtime"
+
+	nodeWithDPUName := "node-with-dpu"
+
+	objects := []client.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   nodeWithDPUName,
+				Labels: map[string]string{"k8s.ovn.org/dpu-host": ""},
+			},
+		},
+		&unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": "k8s.cni.cncf.io/v1",
+				"kind":       "NetworkAttachmentDefinition",
+				"metadata": map[string]any{
+					"name":      defaultNADName,
+					"namespace": nadNamespace,
+					"annotations": map[string]any{
+						"k8s.v1.cni.cncf.io/resourceName": defaultResourceName.String(),
+					},
+				},
+			},
+		},
+		&unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": "k8s.cni.cncf.io/v1",
+				"kind":       "NetworkAttachmentDefinition",
+				"metadata": map[string]any{
+					"name":      kataNADName,
+					"namespace": nadNamespace,
+					"annotations": map[string]any{
+						"k8s.v1.cni.cncf.io/resourceName": kataResourceName.String(),
+					},
+				},
+			},
+		},
+	}
+
+	basePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "nginx",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{},
+						Limits:   corev1.ResourceList{},
+					},
+				},
+			},
+		},
+	}
+
+	podWithKataRuntimeClass := basePod.DeepCopy()
+	podWithKataRuntimeClass.Spec.RuntimeClassName = &kataRuntimeClass
+
+	podWithUnknownRuntimeClass := basePod.DeepCopy()
+	podWithUnknownRuntimeClass.Spec.RuntimeClassName = &unknownRuntimeClass
+
+	tests := []struct {
+		name                         string
+		pod                          *corev1.Pod
+		expectedInjectedResourceName corev1.ResourceName
+		expectedAnnotation           string
+	}{
+		{
+			name:                         "no runtimeClass uses default NAD and default resource",
+			pod:                          basePod,
+			expectedInjectedResourceName: defaultResourceName,
+			expectedAnnotation:           "ovn-kubernetes/dpf-ovn-kubernetes",
+		},
+		{
+			name:                         "kata-qemu runtimeClass uses mapped NAD and kata-qemu resource",
+			pod:                          podWithKataRuntimeClass,
+			expectedInjectedResourceName: kataResourceName,
+			expectedAnnotation:           "ovn-kubernetes/dpf-ovn-kubernetes-kata-qemu",
+		},
+		{
+			name:                         "unknown runtimeClass falls back to default NAD and default resource",
+			pod:                          podWithUnknownRuntimeClass,
+			expectedInjectedResourceName: defaultResourceName,
+			expectedAnnotation:           "ovn-kubernetes/dpf-ovn-kubernetes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			s := scheme.Scheme
+			fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
+			webhook := &NetworkInjector{
+				Client: fakeclient,
+				Settings: NetworkInjectorSettings{
+					NADName:      defaultNADName,
+					NADNamespace: nadNamespace,
+					RuntimeClassNADMappings: map[string]string{
+						kataRuntimeClass: kataNADName,
+					},
+					DPUHostLabelKey:      "k8s.ovn.org/dpu-host",
+					DPUHostLabelValue:    "",
+					PrioritizeOffloading: true,
+				},
+			}
+			err := webhook.Default(context.Background(), tt.pod)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(tt.pod.Spec.Containers[0].Resources.Requests[tt.expectedInjectedResourceName].Equal(resource.MustParse("1"))).To(BeTrue())
+			g.Expect(tt.pod.Spec.Containers[0].Resources.Limits[tt.expectedInjectedResourceName].Equal(resource.MustParse("1"))).To(BeTrue())
+			g.Expect(tt.pod.Annotations[annotationKeyToBeInjected]).To(Equal(tt.expectedAnnotation))
+		})
+	}
+}
+
+func TestNetworkInjector_ResolveNADName(t *testing.T) {
+	defaultNAD := "dpf-ovn-kubernetes"
+	kataNAD := "dpf-ovn-kubernetes-kata-qemu"
+	kataRuntimeClass := "kata-qemu"
+	emptyString := ""
+
+	webhook := &NetworkInjector{
+		Settings: NetworkInjectorSettings{
+			NADName: defaultNAD,
+			RuntimeClassNADMappings: map[string]string{
+				kataRuntimeClass: kataNAD,
+			},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		runtimeClass *string
+		expectedNAD  string
+	}{
+		{
+			name:         "nil runtimeClassName returns default NAD",
+			runtimeClass: nil,
+			expectedNAD:  defaultNAD,
+		},
+		{
+			name:         "empty runtimeClassName returns default NAD",
+			runtimeClass: &emptyString,
+			expectedNAD:  defaultNAD,
+		},
+		{
+			name:         "mapped runtimeClassName returns mapped NAD",
+			runtimeClass: &kataRuntimeClass,
+			expectedNAD:  kataNAD,
+		},
+		{
+			name:         "unmapped runtimeClassName falls back to default NAD",
+			runtimeClass: func() *string { s := "unknown"; return &s }(),
+			expectedNAD:  defaultNAD,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			pod := &corev1.Pod{
+				Spec: corev1.PodSpec{RuntimeClassName: tt.runtimeClass},
+			}
+			g.Expect(webhook.resolveNADName(pod)).To(Equal(tt.expectedNAD))
+		})
+	}
+}
+
 // createTestObjects creates common test objects (nodes and NAD) used across multiple tests.
 func createTestObjects(resourceName corev1.ResourceName, nodeWithoutDPUName, nodeWithDPUName, nodeWithNoLabelsName string) []client.Object {
 	return []client.Object{
