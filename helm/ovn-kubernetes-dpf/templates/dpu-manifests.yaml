@@ -166,7 +166,13 @@ spec:
               "name": "pf",
               "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.hostInterface.pool }}",
               "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.hostInterface.poolType }}",
-              "allocateIPWithIndex": {{ default .Values.dpuManifests.ipamPFIPIndex .Values.dpuManifests.ipam.hostInterface.ipIndex }}
+              "allocateIPWithIndex": {{- if ne .Values.dpuManifests.ipam.hostInterface.pfIPIndex nil }} {{ .Values.dpuManifests.ipam.hostInterface.pfIPIndex }}{{- else if ne .Values.dpuManifests.ipam.hostInterface.ipIndex nil }} {{ .Values.dpuManifests.ipam.hostInterface.ipIndex }}{{- else }} {{ .Values.dpuManifests.ipamPFIPIndex }}{{- end }}
+            },
+            {
+              "name": "br-ovn",
+              "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.hostInterface.pool }}",
+              "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.hostInterface.poolType }}",
+              "allocateIPWithIndex": {{- if ne .Values.dpuManifests.ipam.hostInterface.brOVNIPIndex nil }} {{ .Values.dpuManifests.ipam.hostInterface.brOVNIPIndex }}{{- else }} {{ .Values.dpuManifests.ipamBROVNIPIndex }}{{- end }}
             }
           ]
         {{- end }}
@@ -281,24 +287,17 @@ spec:
             - /var/run/readyz
           initialDelaySeconds: 30
         {{- if not .Values.dpuManifests.externalDHCP }}
-        # ┌──────────────────────────────────────────────────────────────────────────┐
-        # │ Liveness probe disabled: With split IPAM, DHCP for the host PF is now   │
-        # │ handled by HBN. The dnsmasq-based liveness probe is no longer needed.   │
-        # │                                                                          │
-        # │ NOTE: The DHCP server code in provisioner.go (startDHCPServer) has also  │
-        # │ been commented out. If DHCP is re-enabled there, re-enable this probe.  │
-        # └──────────────────────────────────────────────────────────────────────────┘
-        # livenessProbe:
-        #   exec:
-        #     command:
-        #     - /bin/sh
-        #     - -c
-        #     - |
-        #       # Check if DHCP server is listening on UDP port 67
-        #       ss -uln | grep -q ':67 '
-        #   initialDelaySeconds: 90
-        #   periodSeconds: 30
-        #   failureThreshold: 3
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Check if DHCP server is listening on UDP port 67
+              ss -uln | grep -q ':67 '
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          failureThreshold: 3
         {{- end }}
         securityContext:
           privileged: true

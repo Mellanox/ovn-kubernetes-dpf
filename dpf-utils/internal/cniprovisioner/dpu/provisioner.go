@@ -134,9 +134,13 @@ type DPUCNIProvisioner struct {
 	hostCIDR *net.IPNet
 	// pfIP is the IP that should be added to the PF on the host
 	pfIP *net.IPNet
-	// pfGateway is the gateway IP from the host interface pool allocation. Used for routing traffic
-	// destined to the host interface CIDR (e.g. 10.0.120.0/24) via br-ovn.
+	// pfGateway is the gateway IP from the PF IP allocation.
 	pfGateway net.IP
+	// brOVNIP is the IP that should be added to br-ovn in internal IPAM mode.
+	brOVNIP *net.IPNet
+	// brOVNGateway is the gateway IP from the br-ovn allocation. It is advertised to the host PF via DHCP and written
+	// into OVN's next-hop configuration.
+	brOVNGateway net.IP
 	// hostInterfaceCIDR is the aggregate CIDR of the host interface pool (e.g. 10.0.120.0/24).
 	// This is used for routing and symmetric routing configuration.
 	hostInterfaceCIDR *net.IPNet
@@ -178,6 +182,8 @@ func New(ctx context.Context,
 	hostCIDR *net.IPNet,
 	pfIP *net.IPNet,
 	pfGateway net.IP,
+	brOVNIP *net.IPNet,
+	brOVNGateway net.IP,
 	hostInterfaceCIDR *net.IPNet,
 	dpuHostName string,
 	gatewayDiscoveryNetwork *net.IPNet,
@@ -201,6 +207,8 @@ func New(ctx context.Context,
 		hostCIDR:                   hostCIDR,
 		pfIP:                       pfIP,
 		pfGateway:                  pfGateway,
+		brOVNIP:                    brOVNIP,
+		brOVNGateway:               brOVNGateway,
 		hostInterfaceCIDR:          hostInterfaceCIDR,
 		dpuHostName:                dpuHostName,
 		mode:                       mode,
@@ -243,33 +251,21 @@ func (p *DPUCNIProvisioner) RunOnce() error {
 	}
 	klog.Info("Configuration complete.")
 
-	// ┌──────────────────────────────────────────────────────────────────────────┐
-	// │ DHCP server disabled: With split IPAM, DHCP for the host PF is now     │
-	// │ handled by HBN. The code below is commented out but retained in case   │
-	// │ it needs to be restored in a different form.                           │
-	// │                                                                        │
-	// │ NOTE: The liveness probe in the Helm chart (dpu-manifests.yaml) that   │
-	// │ checks for dnsmasq on UDP port 67 has also been commented out.         │
-	// │ If DHCP is re-enabled here, re-enable the liveness probe as well.     │
-	// └──────────────────────────────────────────────────────────────────────────┘
-	// if p.mode == InternalIPAM {
-	// 	if err := p.startDHCPServer(); err != nil {
-	// 		return fmt.Errorf("error while starting DHCP server: %w", err)
-	// 	}
-	// 	klog.Info("DHCP Server started.")
-	// }
+	if p.mode == InternalIPAM {
+		if err := p.startDHCPServer(); err != nil {
+			return fmt.Errorf("error while starting DHCP server: %w", err)
+		}
+		klog.Info("DHCP Server started.")
+	}
 
 	return nil
 }
 
 // Stop stops the provisioner
 func (p *DPUCNIProvisioner) Stop() {
-	// ┌──────────────────────────────────────────────────────────────────────────┐
-	// │ DHCP server disabled: see RunOnce() for details.                       │
-	// └──────────────────────────────────────────────────────────────────────────┘
-	// if p.mode == InternalIPAM {
-	// 	p.dhcpCmd.Stop()
-	// }
+	if p.mode == InternalIPAM && p.dhcpCmd != nil {
+		p.dhcpCmd.Stop()
+	}
 
 	klog.Info("Provisioner stopped")
 }
@@ -470,8 +466,9 @@ func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error
 			return fmt.Errorf("error while setting link %s up: %w", brVTEP, err)
 		}
 
-		// br-ovn has no IP assigned — HBN owns the host interface IPs.
-		// Just bring the bridge up so it can forward traffic.
+		if err := p.setLinkIPAddressIfNotSet(brOVN, p.brOVNIP); err != nil {
+			return fmt.Errorf("error while setting br-ovn IP on %s: %w", brOVN, err)
+		}
 		if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
 			return fmt.Errorf("error while setting link %s up: %w", brOVN, err)
 		}
@@ -614,15 +611,24 @@ func (p *DPUCNIProvisioner) configureBROVN() error {
 // writeOVNInputGatewayOptsFile returns the gateway options content
 // that ovnkube-controller reads from.
 func (p *DPUCNIProvisioner) writeOVNInputGatewayOptsFile() string {
-	return "next-hop=" + p.pfGateway.String() + "\n"
+	if p.mode == InternalIPAM && p.brOVNGateway != nil {
+		return "next-hop=" + p.brOVNGateway.String() + "\n"
+	}
+	return "next-hop=" + p.gateway.String() + "\n"
 }
 
 // writeOVNInputRouterSubnetPath returns the Gateway Router Subnet content
 // that kubeovn-controller reads.
 func (p *DPUCNIProvisioner) writeOVNInputRouterSubnetPath() (string, error) {
-	_, hostInterfaceNetwork, err := net.ParseCIDR(p.pfIP.String())
+	hostInterfaceIP := p.pfIP
+	if p.mode == InternalIPAM && p.brOVNIP != nil {
+		hostInterfaceIP = p.brOVNIP
+	} else if p.vtepIPNet != nil {
+		hostInterfaceIP = p.vtepIPNet
+	}
+	_, hostInterfaceNetwork, err := net.ParseCIDR(hostInterfaceIP.String())
 	if err != nil {
-		return "", fmt.Errorf("error while parsing network from host interface IP %s: %w", p.pfIP.String(), err)
+		return "", fmt.Errorf("error while parsing network from host interface IP %s: %w", hostInterfaceIP.String(), err)
 	}
 	return "router-subnet=" + hostInterfaceNetwork.String() + "\n", nil
 }
@@ -688,62 +694,55 @@ func (p *DPUCNIProvisioner) runNetplanApply() error {
 
 // startDHCPServer starts a DHCP Server to enable the PF on the host to get an IP.
 func (p *DPUCNIProvisioner) startDHCPServer() error {
-	// ┌──────────────────────────────────────────────────────────────────────────┐
-	// │ DHCP server disabled: With split IPAM, DHCP for the host PF is now     │
-	// │ handled by HBN. The code below is commented out but retained in case   │
-	// │ it needs to be restored in a different form.                           │
-	// │                                                                        │
-	// │ NOTE: The liveness probe in the Helm chart (dpu-manifests.yaml) that   │
-	// │ checks for dnsmasq on UDP port 67 has also been commented out.         │
-	// │ If DHCP is re-enabled here, re-enable the liveness probe as well.     │
-	// └──────────────────────────────────────────────────────────────────────────┘
+	if p.dhcpCmd != nil {
+		klog.Warning("DHCP Server already running")
+		return nil
+	}
 
-	// if p.dhcpCmd != nil {
-	// 	klog.Warning("DHCP Server already running")
-	// 	return nil
-	// }
-	//
-	// _, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
-	// if err != nil {
-	// 	return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
-	// }
-	//
-	// mac, err := p.networkHelper.GetHostPFMACAddressDPU("0")
-	// if err != nil {
-	// 	return fmt.Errorf("error while parsing MAC address of the PF on the host: %w", err)
-	// }
-	//
-	// // Add the geneve header size to the MTU.
-	// pfMTU := p.ovnMTU + geneveHeaderSize
-	//
-	// if pfMTU == geneveHeaderSize || pfMTU > maxMTUSize {
-	// 	return errors.New("invalid PF MTU: it must be greater than 60 and less than or equal to 9216")
-	// }
-	//
-	// args := []string{
-	// 	"--keep-in-foreground",
-	// 	"--port=0",         // Disable DNS Server
-	// 	"--log-facility=-", // Log to stderr
-	// 	fmt.Sprintf("--interface=%s", brOVN),
-	// 	"--dhcp-option=option:router",
-	// 	fmt.Sprintf("--dhcp-option=option:mtu,%d", pfMTU),
-	// 	fmt.Sprintf("--dhcp-range=%s,static", vtepNetwork.IP.String()),
-	// 	fmt.Sprintf("--dhcp-host=%s,%s", mac, p.pfIP.IP.String()),
-	// }
-	//
-	// if vtepNetwork.String() != p.vtepCIDR.String() {
-	// 	args = append(args, fmt.Sprintf("--dhcp-option=option:classless-static-route,%s,%s", p.vtepCIDR.String(), p.gateway.String()))
-	// }
-	//
-	// cmd := p.exec.Command("dnsmasq", args...)
-	//
-	// cmd.SetStdout(os.Stdout)
-	// cmd.SetStderr(os.Stderr)
-	// if err := cmd.Start(); err != nil {
-	// 	return fmt.Errorf("error while starting the DHCP server: %w", err)
-	// }
-	//
-	// p.dhcpCmd = cmd
+	if p.brOVNIP == nil {
+		return errors.New("br-ovn IP allocation is required to start DHCP server")
+	}
+	if p.brOVNGateway == nil {
+		return errors.New("br-ovn gateway allocation is required to start DHCP server")
+	}
+
+	_, brOVNNetwork, err := net.ParseCIDR(p.brOVNIP.String())
+	if err != nil {
+		return fmt.Errorf("error while parsing network from br-ovn IP %s: %w", p.brOVNIP.String(), err)
+	}
+
+	mac, err := p.networkHelper.GetHostPFMACAddressDPU("0")
+	if err != nil {
+		return fmt.Errorf("error while parsing MAC address of the PF on the host: %w", err)
+	}
+
+	// Add the geneve header size to the MTU.
+	pfMTU := p.ovnMTU + geneveHeaderSize
+
+	if pfMTU == geneveHeaderSize || pfMTU > maxMTUSize {
+		return errors.New("invalid PF MTU: it must be greater than 60 and less than or equal to 9216")
+	}
+
+	args := []string{
+		"--keep-in-foreground",
+		"--port=0",         // Disable DNS Server
+		"--log-facility=-", // Log to stderr
+		fmt.Sprintf("--interface=%s", brOVN),
+		fmt.Sprintf("--dhcp-option=option:router,%s", p.brOVNGateway.String()),
+		fmt.Sprintf("--dhcp-option=option:mtu,%d", pfMTU),
+		fmt.Sprintf("--dhcp-range=%s,static", brOVNNetwork.IP.String()),
+		fmt.Sprintf("--dhcp-host=%s,%s", mac, p.pfIP.IP.String()),
+	}
+
+	cmd := p.exec.Command("dnsmasq", args...)
+
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("error while starting the DHCP server: %w", err)
+	}
+
+	p.dhcpCmd = cmd
 
 	return nil
 }

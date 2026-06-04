@@ -56,6 +56,7 @@ dpuManifests:
   ipamPoolType: null # user needs to populate based on DPUServiceIPAM
   ipamVTEPIPIndex: 0
   ipamPFIPIndex: 1
+  ipamBROVNIPIndex: 2
   # New split IPAM configuration (optional, takes precedence over legacy values above when set)
   ipam:
     vtep:
@@ -67,7 +68,9 @@ dpuManifests:
       cidr: null # e.g. "10.0.120.0/24" - Host interface network CIDR from DPUServiceIPAM
       pool: null # e.g. "host-pool" - DPUServiceIPAM pool name for host interface
       poolType: null # e.g. "cidrpool" - DPUServiceIPAM pool type for host interface
-      ipIndex: null # e.g. 1 - IP index to allocate from host interface pool
+      ipIndex: null # e.g. 1 - legacy PF IP index to allocate from host interface pool
+      pfIPIndex: null # e.g. 1 - IP index to allocate for the host PF DHCP lease
+      brOVNIPIndex: null # e.g. 2 - IP index to allocate for br-ovn
   externalDHCP: false
   gatewayDiscoveryNetwork: "169.254.99.100/32" # This is a "dummy" subnet used to get the default gateway address from DHCP server (via option 121)
   cniBinDir: "/opt/cni/bin"

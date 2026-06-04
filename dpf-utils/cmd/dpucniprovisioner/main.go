@@ -53,6 +53,9 @@ const (
 	// pfIPAllocationFilePath is the path to the file that contains the PF IP allocation done by the IP Allocator.
 	// We should ensure that the IP Allocation request name is pf to have this file created correctly.
 	pfIPAllocationFilePath = "/tmp/ips/pf"
+	// brOVNIPAllocationFilePath is the path to the file that contains the br-ovn IP allocation done by the IP Allocator.
+	// We should ensure that the IP Allocation request name is br-ovn to have this file created correctly.
+	brOVNIPAllocationFilePath = "/tmp/ips/br-ovn"
 	// hostClusterTokenFilePath is where cniprovisioner expects the host-cluster token to be mounted.
 	hostClusterTokenFilePath = "/host-cluster-access/token"
 	// hostClusterCAFilePath is where cniprovisioner expects the host-cluster CA bundle to be mounted.
@@ -81,6 +84,8 @@ func main() {
 	var gateway net.IP
 	var pfIPNet *net.IPNet
 	var pfGateway net.IP
+	var brOVNIPNet *net.IPNet
+	var brOVNGateway net.IP
 	var hostInterfaceCIDR *net.IPNet
 	var vtepCIDR *net.IPNet
 	var ovnMTU int
@@ -94,6 +99,11 @@ func main() {
 		pfIPNet, pfGateway, err = getInfoFromPFIPAllocation()
 		if err != nil {
 			klog.Fatalf("error while parsing info from the PF IP allocation file: %s", err.Error())
+		}
+
+		brOVNIPNet, brOVNGateway, err = getInfoFromBROVNIPAllocation()
+		if err != nil {
+			klog.Fatalf("error while parsing info from the br-ovn IP allocation file: %s", err.Error())
 		}
 
 		ovnMTU, err = getOVNMTU()
@@ -144,7 +154,27 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, pfGateway, hostInterfaceCIDR, node, gatewayDiscoveryNetwork, ovnMTU)
+	provisioner := dpucniprovisioner.New(
+		ctx,
+		mode,
+		c,
+		ovsClient,
+		networkhelper.New(),
+		exec,
+		clientset,
+		vtepIPNet,
+		gateway,
+		vtepCIDR,
+		hostCIDR,
+		pfIPNet,
+		pfGateway,
+		brOVNIPNet,
+		brOVNGateway,
+		hostInterfaceCIDR,
+		node,
+		gatewayDiscoveryNetwork,
+		ovnMTU,
+	)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
 	if ok, renew, dur, err := parseDPUNodeLeaseFromEnv(); err != nil {
 		klog.Fatal(err)
@@ -195,41 +225,25 @@ func main() {
 // getInfoFromVTEPIPAllocation returns the VTEP IP and gateway from a file that contains the VTEP IP allocation done
 // by the IP Allocator component.
 func getInfoFromVTEPIPAllocation() (*net.IPNet, net.IP, error) {
-	content, err := os.ReadFile(vtepIPAllocationFilePath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error while reading file %s: %w", vtepIPAllocationFilePath, err)
-	}
-
-	results := []ipallocator.NVIPAMIPAllocatorResult{}
-	if err := json.Unmarshal(content, &results); err != nil {
-		return nil, nil, fmt.Errorf("error while unmarshalling IP Allocator results: %w", err)
-	}
-
-	if len(results) != 1 {
-		return nil, nil, fmt.Errorf("expecting exactly 1 IP allocation for VTEP")
-	}
-
-	vtepIPRaw := results[0].IP
-	vtepIP, err := netlink.ParseIPNet(vtepIPRaw)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error while parsing VTEP IP to net.IPNet: %w", err)
-	}
-
-	gatewayRaw := results[0].Gateway
-	gateway := net.ParseIP(gatewayRaw)
-	if gateway == nil {
-		return nil, nil, errors.New("error while parsing Gateway IP to net.IP: input is not valid")
-	}
-
-	return vtepIP, gateway, nil
+	return getInfoFromIPAllocation(vtepIPAllocationFilePath, "VTEP")
 }
 
 // getInfoFromPFIPAllocation returns the PF IP and gateway from a file that contains the PF IP allocation done
 // by the IP Allocator component.
 func getInfoFromPFIPAllocation() (*net.IPNet, net.IP, error) {
-	content, err := os.ReadFile(pfIPAllocationFilePath)
+	return getInfoFromIPAllocation(pfIPAllocationFilePath, "PF")
+}
+
+// getInfoFromBROVNIPAllocation returns the br-ovn IP and gateway from a file that contains the br-ovn IP allocation
+// done by the IP Allocator component.
+func getInfoFromBROVNIPAllocation() (*net.IPNet, net.IP, error) {
+	return getInfoFromIPAllocation(brOVNIPAllocationFilePath, "br-ovn")
+}
+
+func getInfoFromIPAllocation(path, name string) (*net.IPNet, net.IP, error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while reading file %s: %w", pfIPAllocationFilePath, err)
+		return nil, nil, fmt.Errorf("error while reading file %s: %w", path, err)
 	}
 
 	results := []ipallocator.NVIPAMIPAllocatorResult{}
@@ -238,22 +252,22 @@ func getInfoFromPFIPAllocation() (*net.IPNet, net.IP, error) {
 	}
 
 	if len(results) != 1 {
-		return nil, nil, fmt.Errorf("expecting exactly 1 IP allocation for PF")
+		return nil, nil, fmt.Errorf("expecting exactly 1 IP allocation for %s", name)
 	}
 
-	pfIPRaw := results[0].IP
-	pfIP, err := netlink.ParseIPNet(pfIPRaw)
+	ipRaw := results[0].IP
+	ip, err := netlink.ParseIPNet(ipRaw)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while parsing PF IP to net.IPNet: %w", err)
+		return nil, nil, fmt.Errorf("error while parsing %s IP to net.IPNet: %w", name, err)
 	}
 
 	gatewayRaw := results[0].Gateway
 	gateway := net.ParseIP(gatewayRaw)
 	if gateway == nil {
-		return nil, nil, errors.New("error while parsing PF Gateway IP to net.IP: input is not valid")
+		return nil, nil, fmt.Errorf("error while parsing %s Gateway IP to net.IP: input is not valid", name)
 	}
 
-	return pfIP, gateway, nil
+	return ip, gateway, nil
 }
 
 // getVTEPCIDR returns the VTEP CIDR to be used by the provisioner
