@@ -153,8 +153,7 @@ dpuHealthCheck:
   leaseDuration: 40
   # -- Override the lease namespace on the DPU side. Use this when the DPU cluster's
   # Release.Namespace differs from the host cluster's namespace where the lease lives.
-  # Defaults to leaseNamespace if set, otherwise Release.Namespace.
-  leaseNamespace: ""
+  leaseNamespace: "ovn-kubernetes"
 
 # DPF Contract. These values are effective only for manifests related to hosts that
 # have a DPU and the DPU manifests themselves.
