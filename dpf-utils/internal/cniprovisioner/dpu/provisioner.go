@@ -155,6 +155,10 @@ type DPUCNIProvisioner struct {
 	// Kubernetes.OVNConfigNamespace; DPU leases and other config objects use this namespace).
 	writeOVNKConfigNamespaceToOVNKConf bool
 	ovnConfigNamespace               string
+
+	// dpuNodeLeaseNamespace, when non-empty, adds dpu-node-lease-namespace to the [ovnkubenode] section
+	// of ovn_k8s.conf, overriding the namespace where DPU node leases are stored on the host cluster.
+	dpuNodeLeaseNamespace string
 }
 
 // New creates a DPUCNIProvisioner that can configure the system
@@ -223,6 +227,12 @@ func (p *DPUCNIProvisioner) SetOVNConfigNamespaceForOVNConf(namespace string) {
 	}
 	p.writeOVNKConfigNamespaceToOVNKConf = true
 	p.ovnConfigNamespace = ns
+}
+
+// SetDPUNodeLeaseNamespaceForOVNConf sets dpu-node-lease-namespace under [ovnkubenode] in ovn_k8s.conf.
+// Use this when the DPU cluster's namespace differs from the host cluster's namespace where the lease lives.
+func (p *DPUCNIProvisioner) SetDPUNodeLeaseNamespaceForOVNConf(namespace string) {
+	p.dpuNodeLeaseNamespace = strings.TrimSpace(namespace)
 }
 
 // RunOnce runs the provisioning flow once and exits
@@ -544,10 +554,15 @@ func (p *DPUCNIProvisioner) writeFilesForOVN() error {
 		content += "ovn-config-namespace=" + p.ovnConfigNamespace + "\n"
 	}
 
-	if p.writeDPUNodeLeaseToOVNKConf {
+	if p.writeDPUNodeLeaseToOVNKConf || p.dpuNodeLeaseNamespace != "" {
 		content += "\n[ovnkubenode]\n"
-		content += fmt.Sprintf("dpu-node-lease-renew-interval=%d\n", p.dpuNodeLeaseRenewInterval)
-		content += fmt.Sprintf("dpu-node-lease-duration=%d\n", p.dpuNodeLeaseDuration)
+		if p.writeDPUNodeLeaseToOVNKConf {
+			content += fmt.Sprintf("dpu-node-lease-renew-interval=%d\n", p.dpuNodeLeaseRenewInterval)
+			content += fmt.Sprintf("dpu-node-lease-duration=%d\n", p.dpuNodeLeaseDuration)
+		}
+		if p.dpuNodeLeaseNamespace != "" {
+			content += "dpu-node-lease-namespace=" + p.dpuNodeLeaseNamespace + "\n"
+		}
 	}
 
 	// Write the complete content to the file in one operation

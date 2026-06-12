@@ -146,6 +146,7 @@ func main() {
 	}
 	if ns := strings.TrimSpace(os.Getenv("OVNKUBE_NODE_LEASE_NAMESPACE")); ns != "" {
 		provisioner.SetOVNConfigNamespaceForOVNConf(ns)
+		provisioner.SetDPUNodeLeaseNamespaceForOVNConf(ns)
 	}
 	if strings.TrimSpace(provisioner.K8sAPIServer) != "" {
 		hostClusterClient, err := newHostClusterClient(provisioner.K8sAPIServer)

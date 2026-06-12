@@ -338,7 +338,7 @@ spec:
         - name: OVNKUBE_NODE_DPU_LEASE_DURATION
           value: {{ .Values.dpuHealthCheck.leaseDuration | quote }}
         - name: OVNKUBE_NODE_LEASE_NAMESPACE
-          value: {{ default .Release.Namespace .Values.leaseNamespace | quote }}
+          value: {{ .Values.dpuHealthCheck.leaseNamespace | default .Values.leaseNamespace | default .Release.Namespace | quote }}
         volumeMounts:
         {{- if .Values.dpuManifests.externalDHCP }}
         # Needed so that we can write netplan config files
@@ -821,7 +821,11 @@ spec:
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVNKUBE_NODE_LEASE_NAMESPACE
-          value: {{ default .Release.Namespace .Values.leaseNamespace }}
+          value: {{ .Values.dpuHealthCheck.leaseNamespace | default .Values.leaseNamespace | default .Release.Namespace }}
+        - name: OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL
+          value: {{ .Values.dpuHealthCheck.renewInterval | quote }}
+        - name: OVNKUBE_NODE_DPU_LEASE_DURATION
+          value: {{ .Values.dpuHealthCheck.leaseDuration | quote }}
         readinessProbe:
           httpGet:
             path: /metrics
