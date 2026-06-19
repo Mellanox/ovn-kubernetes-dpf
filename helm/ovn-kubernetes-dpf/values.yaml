@@ -6,7 +6,7 @@ ovn-kubernetes-resource-injector:
   resourceName: nvidia.com/bf3-p0-vfs
   # -- Per-runtimeClass NAD mappings. Each entry creates an additional NetworkAttachmentDefinition and maps a
   # runtimeClassName to it. Pods with a matching runtimeClass use the mapped NAD (and its resourceName) instead of
-  # the default nadName/resourceName.
+  # the default nadName/resourceName. Format: list of {runtimeClass, nadName, resourceName}.
   runtimeClassMappings:
     - runtimeClass: kata-qemu
       nadName: dpf-ovn-kubernetes-kata-qemu
