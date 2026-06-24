@@ -417,9 +417,7 @@ spec:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
         - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ .Values.global.leaseNamespace | default "ovn-kubernetes" | quote }}
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -479,9 +477,7 @@ spec:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
         - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ .Values.global.leaseNamespace | default "ovn-kubernetes" | quote }}
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -542,9 +538,7 @@ spec:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
         - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ .Values.global.leaseNamespace | default "ovn-kubernetes" | quote }}
         - name: OVN_SSL_ENABLE
           value: "no"
         - name: OVN_NORTH
@@ -704,9 +698,7 @@ spec:
             fieldRef:
               fieldPath: status.hostIP
         - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ .Values.global.leaseNamespace | default "ovn-kubernetes" | quote }}
         - name: OVN_GATEWAY_MODE
           value: shared
         - name: OVN_GATEWAY_OPTS
@@ -886,9 +878,7 @@ spec:
             fieldRef:
               fieldPath: spec.nodeName
         - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ .Values.global.leaseNamespace | default "ovn-kubernetes" | quote }}
         - name: OVN_SSL_ENABLE
           value: ""
         - name: OVN_NORTH

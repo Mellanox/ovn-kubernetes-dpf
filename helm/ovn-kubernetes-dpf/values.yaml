@@ -135,7 +135,7 @@ commonManifests:
 # -- The name of the namespace where the leases are going to be stored. This value
 # should be the same for the host and DPU components. Defaults to Release.Namespace
 # if it's not set.
-leaseNamespace: ""
+leaseNamespace: "ovn-kubernetes"
 
 # -- DPU Health Check Configuration
 # Controls the lease-based health monitoring for DPU nodes
