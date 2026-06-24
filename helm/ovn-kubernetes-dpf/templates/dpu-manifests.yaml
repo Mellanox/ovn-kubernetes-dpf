@@ -302,13 +302,11 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        {{- if $useSecretBootstrap }}
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
-        {{- end }}
         {{- if .Values.dpuManifests.externalDHCP }}
         # Needed so that systemctl can run inside the container
         - name: SYSTEMCTL_FORCE_BUS
@@ -364,13 +362,11 @@ spec:
           name: host-var-run-ovs
         - mountPath: /var/run/ovn-kubernetes
           name: host-var-run-ovn-kubernetes
-        {{- if $useSecretBootstrap }}
         - mountPath: /host-kubernetes
           name: host-kubeconfig
         - mountPath: /host-cluster-access
           name: tenant-cluster-access-secret
           readOnly: true
-        {{- end }}
       containers:
       - name: nb-ovsdb
         image: {{ .Values.dpuManifests.image.repository }}:{{ .Values.dpuManifests.image.tag }}
@@ -964,12 +960,7 @@ spec:
         hostPath:
           path: /var/run/dbus
       - name: host-kubeconfig
-      {{- if $useSecretBootstrap }}
         emptyDir: {}
-      {{- else }}
-        hostPath:
-          path: /etc/kubernetes/
-      {{- end }}
       - name: host-kubelet
         hostPath:
           path: /var/lib/kubelet
