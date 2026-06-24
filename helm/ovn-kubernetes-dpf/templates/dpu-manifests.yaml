@@ -302,13 +302,11 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        {{- if $useSecretBootstrap }}
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
               name: {{ include "ovn-kubernetes.fullname" . }}-config
               key: k8s_apiserver
-        {{- end }}
         {{- if .Values.dpuManifests.externalDHCP }}
         # Needed so that systemctl can run inside the container
         - name: SYSTEMCTL_FORCE_BUS
