@@ -136,6 +136,8 @@ global:
   enableMultiNetwork: ""
   # -- Configure to enable Multi-Network Policy feature
   enableMultiNetworkPolicy: ""
+  # -- Whether to disable SNAT of egress traffic in namespaces annotated with routing-external-gws
+  disableSnatMultipleGws: ""
   # -- Configure to disable SNAT on default-network gateway routers
   disableSnatGatewayRouters: ""
   # -- Configure to enable Admin Network Policy feature
