@@ -93,6 +93,8 @@ const (
 	hostNodeNameFilePath = "/var/run/ovn-kubernetes/host-node-name"
 	// hostNodeChassisIDAnnotationKey is the host-cluster node annotation used by OVN to track the chassis identity.
 	hostNodeChassisIDAnnotationKey = "k8s.ovn.org/node-chassis-id"
+	// hostNodeEncapIPsAnnotationKey is the host-cluster node annotation used by OVN to track encapsulation IPs.
+	hostNodeEncapIPsAnnotationKey = "k8s.ovn.org/node-encap-ips"
 )
 
 type DPUCNIProvisioner struct {
@@ -192,10 +194,15 @@ func (p *DPUCNIProvisioner) SetHostKubernetesClient(c kubernetes.Interface) {
 
 // RunOnce runs the provisioning flow once and exits
 func (p *DPUCNIProvisioner) RunOnce() error {
-	if err := p.configure(); err != nil {
+	hostName, err := p.configure()
+	if err != nil {
 		return err
 	}
 	klog.Info("Configuration complete.")
+
+	if err := p.reconcileHostNodeEncapIPs(hostName); err != nil {
+		return fmt.Errorf("error while reconciling host node encap IPs annotation: %w", err)
+	}
 	if p.mode == InternalIPAM {
 		if err := p.startDHCPServer(); err != nil {
 			return fmt.Errorf("error while starting DHCP server: %w", err)
@@ -222,50 +229,50 @@ func (p *DPUCNIProvisioner) EnsureConfiguration() {
 		case <-p.ctx.Done():
 			return
 		case <-p.ensureConfigurationTicker.C():
-			if err := p.configure(); err != nil {
+			if _, err := p.configure(); err != nil {
 				klog.Errorf("failed to ensure configuration: %s", err.Error())
 			}
 		}
 	}
 }
 
-// configure runs the provisioning flow once
-func (p *DPUCNIProvisioner) configure() error {
+// configure runs the provisioning flow once and returns the resolved host node name.
+func (p *DPUCNIProvisioner) configure() (string, error) {
 	klog.Info("Configuring Kubernetes host name in OVS")
 	hostName, err := p.findAndSetKubernetesHostNameInOVS()
 	if err != nil {
-		return fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
+		return "", fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
 	}
 	if err := p.writeHostIdentityBootstrapArtifacts(hostName); err != nil {
-		return fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
+		return "", fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
 	}
 	if err := p.reconcileHostNodeChassisID(hostName); err != nil {
-		return fmt.Errorf("error while reconciling host node chassis annotation: %w", err)
+		return "", fmt.Errorf("error while reconciling host node chassis annotation: %w", err)
 	}
 
 	if p.mode == ExternalIPAM {
 		klog.Info("Configuring br-ovn")
 		if err := p.configureBROVN(); err != nil {
-			return fmt.Errorf("error while configuring br-ovn: %w", err)
+			return "", fmt.Errorf("error while configuring br-ovn: %w", err)
 		}
 	}
 
 	klog.Info("Configuring system to enable pod to pod on different node connectivity")
 	if err := p.configurePodToPodOnDifferentNodeConnectivity(); err != nil {
-		return err
+		return "", err
 	}
 
 	klog.Info("Writing OVN Kubernetes expected input files")
 	if err := p.writeFilesForOVN(); err != nil {
-		return err
+		return "", err
 	}
 
 	klog.Info("Configuring symmetric routing")
 	if err := p.configureSymmetricRouting(); err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return hostName, nil
 }
 
 // reconcileHostNodeChassisID removes a stale host-cluster node chassis annotation when it differs from the local OVS
@@ -304,6 +311,34 @@ func (p *DPUCNIProvisioner) reconcileHostNodeChassisID(hostName string) error {
 	}
 	klog.Infof("Removed stale %s=%s from host cluster node %s", hostNodeChassisIDAnnotationKey, current, hostName)
 
+	return nil
+}
+
+// reconcileHostNodeEncapIPs removes the encap IPs annotation from the host node so that ovnkube-node
+// re-sets it, triggering syncZoneIC via NodeEncapIPsChanged. Called once from RunOnce at startup.
+// This is a workaround for https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6627 where a
+// chassis-id change on a remote node does not trigger zone IC sync on non-DPU mode controllers.
+// By removing the encap IPs annotation we force the NodeEncapIPsChanged path which is not guarded
+// by the DPU mode check.
+// Like reconcileHostNodeChassisID, patches go via the nodes/status subresource for RBAC compatibility.
+func (p *DPUCNIProvisioner) reconcileHostNodeEncapIPs(hostName string) error {
+	node, err := p.hostKubernetesClient.CoreV1().Nodes().Get(p.ctx, hostName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("error while getting host cluster node %s: %w", hostName, err)
+	}
+
+	if _, ok := node.Annotations[hostNodeEncapIPsAnnotationKey]; !ok {
+		klog.Infof("Host cluster node %s has no %s annotation; no cleanup needed", hostName, hostNodeEncapIPsAnnotationKey)
+		return nil
+	}
+
+	klog.Infof("Removing %s annotation from host cluster node %s to let ovnkube-node re-register", hostNodeEncapIPsAnnotationKey, hostName)
+	patchBytes := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null}}}`, hostNodeEncapIPsAnnotationKey))
+	if _, err := p.hostKubernetesClient.CoreV1().Nodes().Patch(p.ctx, hostName, k8stypes.MergePatchType, patchBytes, metav1.PatchOptions{}, "status"); err != nil {
+		return fmt.Errorf("error while removing %s annotation from host node %s: %w", hostNodeEncapIPsAnnotationKey, hostName, err)
+	}
+
+	klog.Infof("Removed %s from host cluster node %s", hostNodeEncapIPsAnnotationKey, hostName)
 	return nil
 }
 
