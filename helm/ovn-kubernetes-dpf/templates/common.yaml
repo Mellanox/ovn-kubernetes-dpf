@@ -10,7 +10,7 @@ data:
   svc_cidr:      {{ .Values.serviceNetwork }}
   k8s_apiserver: {{ .Values.k8sAPIServer }}
   mtu:           {{ .Values.mtu | quote }}
-  host_network_namespace: "ovn-host-network"
+  host_network_namespace: {{ .Values.hostNetworkNamespace | quote }}
 ---
 # ovnkube-config ConfigMap
 kind: ConfigMap
