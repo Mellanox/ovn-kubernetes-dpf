@@ -649,6 +649,8 @@ spec:
           value: "5"
         - name: OVNKUBE_LOGFILE_MAXAGE
           value: "5"
+        - name: CNI_REQUEST_TIMEOUT
+          value: {{ .Values.global.cniRequestTimeout | quote }}
         - name: OVNKUBE_LIBOVSDB_CLIENT_LOGFILE
           value: ""
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
