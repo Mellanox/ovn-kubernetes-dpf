@@ -117,6 +117,8 @@ global:
   enableAdminNetworkPolicy: ""
   # -- EgressIP health check port. Default is 9107 (gRPC). Set to 9 for legacy DISCARD port.
   egressIpHealthCheckPort: "9107"
+  # -- Timeout for CNI requests. Uses Go duration syntax, for example "2m" or "45s".
+  cniRequestTimeout: "2m"
   # -- ServiceAccount name for the cluster manager component
   clusterManagerServiceAccountName: "ovnkube-cluster-manager"
 
