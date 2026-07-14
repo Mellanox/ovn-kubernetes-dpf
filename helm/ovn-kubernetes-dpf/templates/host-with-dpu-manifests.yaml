@@ -241,6 +241,8 @@ spec:
           value: "5"
         - name: OVNKUBE_LOGFILE_MAXAGE
           value:  "5"
+        - name: CNI_REQUEST_TIMEOUT
+          value: {{ .Values.global.cniRequestTimeout | quote }}
         - name: OVN_NET_CIDR
           valueFrom:
             configMapKeyRef:
