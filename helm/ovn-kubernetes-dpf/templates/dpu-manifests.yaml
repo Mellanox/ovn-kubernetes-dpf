@@ -732,7 +732,9 @@ spec:
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
-          value: ""
+          value: {{ .Values.extendedFeatures.disableGatewayRouterSNAT | quote }}
+        - name: OVN_DISABLE_SNAT_GATEWAY_ROUTERS
+          value: {{ .Values.extendedFeatures.disableGatewayRouterSNAT | quote }}
         - name: OVN_DISABLE_FORWARDING
           value: ""
         - name: OVN_ENCAP_PORT
