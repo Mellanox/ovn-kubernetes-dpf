@@ -139,6 +139,11 @@ global:
   # -- ServiceAccount name for the cluster-manager component
   clusterManagerServiceAccountName: "ovnkube-cluster-manager"
 
+# -- Feature flags for specialized use cases
+extendedFeatures:
+  # --- Configure to disable SNAT on default-network gateway routers
+  disableGatewayRouterSNAT: false
+
 # -- Variables related to common manifests used by components in both DPU and Host cluster
 commonManifests:
   enabled: false
