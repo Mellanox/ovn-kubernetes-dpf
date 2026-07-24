@@ -77,6 +77,20 @@ dpuManifests:
   ipamPoolType: null # user needs to populate based on DPUServiceIPAM
   ipamVTEPIPIndex: 0
   ipamPFIPIndex: 1
+  # New split IPAM configuration (optional, takes precedence over default IPAM values above when set)
+  ipam:
+    vtep:
+      cidr: null
+      pool: null
+      poolType: null
+      ipIndex: null
+    hostInterface:
+      cidr: null
+      pool: null
+      poolType: null
+      ipIndex: null
+      pfIPIndex: null
+      brOVNIPIndex: null
   externalDHCP: false
   gatewayDiscoveryNetwork: "169.254.99.100/32" # This is a "dummy" subnet used to get the default gateway address from DHCP server (via option 121)
   cniBinDir: "/opt/cni/bin"
