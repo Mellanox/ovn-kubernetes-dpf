@@ -76,8 +76,9 @@ const (
 	// brOVN is the name of the bridge that is used by OVN as the external bridge (br-ex). This is the bridge that is
 	// later connected with br-sfc. In the current OVN IC w/ DPU implementation, the internal port of this bridge acts
 	// as the VTEP.
-	brOVN = "br-ovn"
-	brDPU = "br-dpu"
+	brOVN  = "br-ovn"
+	brDPU  = "br-dpu"
+	brVTEP = "br-vtep"
 
 	// ovnkInputPath is the path to the file in which ovnkube-controller expects the additional gateway opts
 	ovnkInputPath = "/etc/openvswitch/ovn_k8s.conf"
@@ -133,6 +134,16 @@ type DPUCNIProvisioner struct {
 	hostCIDR *net.IPNet
 	// pfIP is the IP that should be added to the PF on the host
 	pfIP *net.IPNet
+	// pfGateway is the gateway IP from the PF IP allocation.
+	pfGateway net.IP
+	// brOVNIP is the IP that should be added to br-ovn in internal IPAM mode.
+	brOVNIP *net.IPNet
+	// brOVNGateway is the gateway IP from the br-ovn allocation. It is advertised to the host PF via DHCP and written
+	// into OVN's next-hop configuration.
+	brOVNGateway net.IP
+	// hostInterfaceCIDR is the aggregate CIDR of the host interface pool (e.g. 10.0.120.0/24).
+	// This is used for routing and symmetric routing configuration.
+	hostInterfaceCIDR *net.IPNet
 	// dpuHostName is the name of the DPU.
 	dpuHostName string
 	// gatewayDiscoveryNetwork is the network from which the DPUCNIProvisioner discovers the gateway that it should be
@@ -148,13 +159,13 @@ type DPUCNIProvisioner struct {
 
 	// writeDPUNodeLeaseToOVNKConf, when true, adds [ovnkubenode] dpu-node-lease-* keys to ovn_k8s.conf.
 	writeDPUNodeLeaseToOVNKConf bool
-	dpuNodeLeaseRenewInterval  int
-	dpuNodeLeaseDuration       int
+	dpuNodeLeaseRenewInterval   int
+	dpuNodeLeaseDuration        int
 
 	// writeOVNKConfigNamespaceToOVNKConf, when true, adds [kubernetes] ovn-config-namespace to ovn_k8s.conf (upstream
 	// Kubernetes.OVNConfigNamespace; DPU leases and other config objects use this namespace).
 	writeOVNKConfigNamespaceToOVNKConf bool
-	ovnConfigNamespace               string
+	ovnConfigNamespace                 string
 }
 
 // New creates a DPUCNIProvisioner that can configure the system
@@ -170,6 +181,10 @@ func New(ctx context.Context,
 	vtepCIDR *net.IPNet,
 	hostCIDR *net.IPNet,
 	pfIP *net.IPNet,
+	pfGateway net.IP,
+	brOVNIP *net.IPNet,
+	brOVNGateway net.IP,
+	hostInterfaceCIDR *net.IPNet,
 	dpuHostName string,
 	gatewayDiscoveryNetwork *net.IPNet,
 	ovnMTU int,
@@ -191,6 +206,10 @@ func New(ctx context.Context,
 		vtepCIDR:                   vtepCIDR,
 		hostCIDR:                   hostCIDR,
 		pfIP:                       pfIP,
+		pfGateway:                  pfGateway,
+		brOVNIP:                    brOVNIP,
+		brOVNGateway:               brOVNGateway,
+		hostInterfaceCIDR:          hostInterfaceCIDR,
 		dpuHostName:                dpuHostName,
 		mode:                       mode,
 		gatewayDiscoveryNetwork:    gatewayDiscoveryNetwork,
@@ -231,6 +250,7 @@ func (p *DPUCNIProvisioner) RunOnce() error {
 		return err
 	}
 	klog.Info("Configuration complete.")
+
 	if p.mode == InternalIPAM {
 		if err := p.startDHCPServer(); err != nil {
 			return fmt.Errorf("error while starting DHCP server: %w", err)
@@ -243,7 +263,7 @@ func (p *DPUCNIProvisioner) RunOnce() error {
 
 // Stop stops the provisioner
 func (p *DPUCNIProvisioner) Stop() {
-	if p.mode == InternalIPAM {
+	if p.mode == InternalIPAM && p.dhcpCmd != nil {
 		p.dhcpCmd.Stop()
 	}
 
@@ -434,40 +454,49 @@ users:
 	return nil
 }
 
-// configurePodToPodOnDifferentNodeConnectivity configures the VTEP interface (br-ovn) and the ovn-encap-ip external ID
+// configurePodToPodOnDifferentNodeConnectivity configures the VTEP interface (br-vtep) and the ovn-encap-ip external ID
 // so that traffic going through the geneve tunnels can function as expected.
 func (p *DPUCNIProvisioner) configurePodToPodOnDifferentNodeConnectivity() error {
 	if p.mode == InternalIPAM {
-		if err := p.setLinkIPAddressIfNotSet(brOVN, p.vtepIPNet); err != nil {
-			return fmt.Errorf("error while setting VTEP IP: %w", err)
-		}
-		if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
-			return fmt.Errorf("error while setting link %s up: %w", brOVN, err)
-		}
-
-		_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
-		if err != nil {
-			return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
-		}
-
-		if vtepNetwork.String() != p.vtepCIDR.String() {
-			// Add route related to traffic that needs to go from one Pod running on worker Node A to another Pod running
-			// on worker Node B.
-			if err := p.addRouteIfNotExists(p.vtepCIDR, p.gateway, brOVN, nil, nil); err != nil {
-				return fmt.Errorf("error while adding route %s %s %s: %w", p.vtepCIDR, p.gateway.String(), brOVN, err)
+		if p.brOVNIP != nil {
+			if err := p.setLinkIPAddressIfNotSet(brVTEP, p.vtepIPNet); err != nil {
+				return fmt.Errorf("error while setting VTEP IP on %s: %w", brVTEP, err)
+			}
+			if err := p.networkHelper.SetLinkUp(brVTEP); err != nil {
+				return fmt.Errorf("error while setting link %s up: %w", brVTEP, err)
+			}
+			if err := p.setLinkIPAddressIfNotSet(brOVN, p.brOVNIP); err != nil {
+				return fmt.Errorf("error while setting br-ovn IP on %s: %w", brOVN, err)
+			}
+			if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
+				return fmt.Errorf("error while setting link %s up: %w", brOVN, err)
+			}
+			if err := p.addRouteIfNotExists(p.vtepCIDR, p.gateway, brVTEP, nil, nil); err != nil {
+				return fmt.Errorf("error while adding VTEP route %s via %s dev %s: %w", p.vtepCIDR, p.gateway.String(), brVTEP, err)
+			}
+		} else {
+			if err := p.setLinkIPAddressIfNotSet(brOVN, p.vtepIPNet); err != nil {
+				return fmt.Errorf("error while setting VTEP IP: %w", err)
+			}
+			if err := p.networkHelper.SetLinkUp(brOVN); err != nil {
+				return fmt.Errorf("error while setting link %s up: %w", brOVN, err)
+			}
+			_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
+			if err != nil {
+				return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
+			}
+			if vtepNetwork.String() != p.vtepCIDR.String() {
+				if err := p.addRouteIfNotExists(p.vtepCIDR, p.gateway, brOVN, nil, nil); err != nil {
+					return fmt.Errorf("error while adding route %s %s %s: %w", p.vtepCIDR, p.gateway.String(), brOVN, err)
+				}
 			}
 		}
 	}
 
-	// Add route related to traffic that needs to go from one Pod running on worker Node A to another Pod running on
-	// control plane A (and vice versa).
-	//
-	// In our setup, we will already have a route pointing to the same CIDR via the SF designated for kubelet traffic
-	// which gets a DHCP IP in that CIDR. Given that, we need to set the metric of this route to something very high
-	// so that it's the last preferred route in the route table for that CIDR. The reason for that is this OVS bug that
-	// selects the route with the highest prio - see issue 3871067.
-	if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil); err != nil {
-		return fmt.Errorf("error while adding route %s %s %s: %w", p.hostCIDR, p.gateway.String(), brOVN, err)
+	if p.mode == InternalIPAM && p.brOVNIP == nil {
+		if err := p.addRouteIfNotExists(p.hostCIDR, p.gateway, brOVN, ptr.To(10000), nil); err != nil {
+			return fmt.Errorf("error while adding route %s %s %s: %w", p.hostCIDR, p.gateway.String(), brOVN, err)
+		}
 	}
 
 	if err := p.ovsClient.SetOVNEncapIP(p.vtepIPNet.IP); err != nil {
@@ -592,17 +621,26 @@ func (p *DPUCNIProvisioner) configureBROVN() error {
 // writeOVNInputGatewayOptsFile returns the gateway options content
 // that ovnkube-controller reads from.
 func (p *DPUCNIProvisioner) writeOVNInputGatewayOptsFile() string {
+	if p.mode == InternalIPAM && p.brOVNGateway != nil {
+		return "next-hop=" + p.brOVNGateway.String() + "\n"
+	}
 	return "next-hop=" + p.gateway.String() + "\n"
 }
 
 // writeOVNInputRouterSubnetPath returns the Gateway Router Subnet content
 // that kubeovn-controller reads.
 func (p *DPUCNIProvisioner) writeOVNInputRouterSubnetPath() (string, error) {
-	_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
-	if err != nil {
-		return "", fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
+	hostInterfaceIP := p.pfIP
+	if p.mode == InternalIPAM && p.brOVNIP != nil {
+		hostInterfaceIP = p.brOVNIP
+	} else if p.vtepIPNet != nil {
+		hostInterfaceIP = p.vtepIPNet
 	}
-	return "router-subnet=" + vtepNetwork.String() + "\n", nil
+	_, hostInterfaceNetwork, err := net.ParseCIDR(hostInterfaceIP.String())
+	if err != nil {
+		return "", fmt.Errorf("error while parsing network from host interface IP %s: %w", hostInterfaceIP.String(), err)
+	}
+	return "router-subnet=" + hostInterfaceNetwork.String() + "\n", nil
 }
 
 // writeNetplanFileForBROVN writes a netplan file for br-ovn to request dhcp
@@ -671,9 +709,20 @@ func (p *DPUCNIProvisioner) startDHCPServer() error {
 		return nil
 	}
 
-	_, vtepNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
+	_, dhcpNetwork, err := net.ParseCIDR(p.vtepIPNet.String())
 	if err != nil {
 		return fmt.Errorf("error while parsing network from VTEP IP %s: %w", p.vtepIPNet.String(), err)
+	}
+	dhcpRouter := ""
+	if p.brOVNIP != nil {
+		if p.brOVNGateway == nil {
+			return errors.New("br-ovn gateway allocation is required with a br-ovn IP allocation")
+		}
+		_, dhcpNetwork, err = net.ParseCIDR(p.brOVNIP.String())
+		if err != nil {
+			return fmt.Errorf("error while parsing network from br-ovn IP %s: %w", p.brOVNIP.String(), err)
+		}
+		dhcpRouter = "," + p.brOVNGateway.String()
 	}
 
 	mac, err := p.networkHelper.GetHostPFMACAddressDPU("0")
@@ -693,13 +742,12 @@ func (p *DPUCNIProvisioner) startDHCPServer() error {
 		"--port=0",         // Disable DNS Server
 		"--log-facility=-", // Log to stderr
 		fmt.Sprintf("--interface=%s", brOVN),
-		"--dhcp-option=option:router",
+		"--dhcp-option=option:router" + dhcpRouter,
 		fmt.Sprintf("--dhcp-option=option:mtu,%d", pfMTU),
-		fmt.Sprintf("--dhcp-range=%s,static", vtepNetwork.IP.String()),
+		fmt.Sprintf("--dhcp-range=%s,static", dhcpNetwork.IP.String()),
 		fmt.Sprintf("--dhcp-host=%s,%s", mac, p.pfIP.IP.String()),
 	}
-
-	if vtepNetwork.String() != p.vtepCIDR.String() {
+	if p.brOVNIP == nil && dhcpNetwork.String() != p.vtepCIDR.String() {
 		args = append(args, fmt.Sprintf("--dhcp-option=option:classless-static-route,%s,%s", p.vtepCIDR.String(), p.gateway.String()))
 	}
 
@@ -712,6 +760,7 @@ func (p *DPUCNIProvisioner) startDHCPServer() error {
 	}
 
 	p.dhcpCmd = cmd
+
 	return nil
 }
 
@@ -774,6 +823,14 @@ func (p *DPUCNIProvisioner) configureSymmetricRouting() error {
 	// ip route a table 60 10.0.120.0/22 via 10.0.110.254 dev br-comm-ch
 	if err := p.addRouteIfNotExists(p.vtepCIDR, defaultGateway, oobInterface, nil, ptr.To(sourceRoutingTable)); err != nil {
 		return fmt.Errorf("error while adding rule: %w", err)
+	}
+
+	// TODO: REVIEW — confirm host interface CIDR needs symmetric routing via OOB
+	// ip route a table 60 10.0.120.0/24 via 10.0.110.254 dev br-comm-ch
+	if p.hostInterfaceCIDR != nil {
+		if err := p.addRouteIfNotExists(p.hostInterfaceCIDR, defaultGateway, oobInterface, nil, ptr.To(sourceRoutingTable)); err != nil {
+			return fmt.Errorf("error while adding symmetric route for host interface CIDR: %w", err)
+		}
 	}
 
 	return nil
