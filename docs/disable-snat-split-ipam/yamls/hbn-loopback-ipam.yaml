@@ -1,0 +1,10 @@
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceIPAM
+metadata:
+  name: loopback
+  namespace: dpf-operator-system
+spec:
+  ipv4Network:
+    network: "10.70.0.0/16"
+    prefixSize: 32
