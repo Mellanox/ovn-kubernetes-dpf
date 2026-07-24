@@ -54,19 +54,24 @@ func newHostKubernetesClient(nodeName string) *corev1.Node {
 
 var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 	Context("When it runs once for the first time", func() {
-		It("should configure the system fully when different subnets per DPU", func() {
+		It("should use separate host and VTEP subnets with symmetric OOB routing", func() {
 			testCtrl := gomock.NewController(GinkgoT())
 			ovsClient := ovsclientMock.NewMockOVSClient(testCtrl)
 			networkhelper := networkhelperMock.NewMockNetworkHelper(testCtrl)
 			fakeExec := &kexecTesting.FakeExec{}
-			vtepIPNet, err := netlink.ParseIPNet("192.168.1.1/24")
+			vtepIPNet, err := netlink.ParseIPNet("192.168.2.1/31")
 			Expect(err).ToNot(HaveOccurred())
-			gateway := net.ParseIP("192.168.1.10")
-			vtepCIDR, err := netlink.ParseIPNet("192.168.1.0/23")
+			gateway := net.ParseIP("192.168.2.0")
+			hostGateway := net.ParseIP("192.168.1.10")
+			vtepCIDR, err := netlink.ParseIPNet("192.168.2.0/24")
 			Expect(err).ToNot(HaveOccurred())
 			hostCIDR, err := netlink.ParseIPNet("10.0.100.1/24")
 			Expect(err).ToNot(HaveOccurred())
 			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
+			Expect(err).ToNot(HaveOccurred())
+			brOVNIPNet, err := netlink.ParseIPNet("192.168.1.3/24")
+			Expect(err).ToNot(HaveOccurred())
+			_, hostInterfaceCIDR, err := net.ParseCIDR("192.168.1.0/24")
 			Expect(err).ToNot(HaveOccurred())
 			oobIPNet, err := netlink.ParseIPNet("10.0.100.100/24")
 			Expect(err).ToNot(HaveOccurred())
@@ -87,7 +92,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset()
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 8940)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, hostGateway, brOVNIPNet, hostGateway, hostInterfaceCIDR, fakeNode.Name, nil, 8940)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -112,23 +117,23 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 					"--port=0",
 					"--log-facility=-",
 					"--interface=br-ovn",
-					"--dhcp-option=option:router",
+					"--dhcp-option=option:router,192.168.1.10",
 					"--dhcp-option=option:mtu,9000",
 					"--dhcp-range=192.168.1.0,static",
 					"--dhcp-host=00:00:00:00:00:01,192.168.1.2",
-					"--dhcp-option=option:classless-static-route,192.168.1.0/23,192.168.1.10",
 				}))
 
 				return kexec.New().Command("echo")
 			}))
 
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet)
-			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
+			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", brOVNIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", brOVNIPNet)
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
-			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-ovn", nil, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
+			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-vtep", nil)
+			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-vtep", nil, nil)
 			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
@@ -144,8 +149,10 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().GetGateway(defaultRouteNetwork).Return(defaultGateway, nil)
 			networkhelper.EXPECT().RouteExists(vtepCIDR, defaultGateway, "br-comm-ch", ptr.To(60)).Return(false, nil)
 			networkhelper.EXPECT().AddRoute(vtepCIDR, defaultGateway, "br-comm-ch", nil, ptr.To(60)).Return(nil)
+			networkhelper.EXPECT().RouteExists(hostInterfaceCIDR, defaultGateway, "br-comm-ch", ptr.To(60)).Return(false, nil)
+			networkhelper.EXPECT().AddRoute(hostInterfaceCIDR, defaultGateway, "br-comm-ch", nil, ptr.To(60)).Return(nil)
 
-			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
+			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.2.1"))
 			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil)
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
 			ovsClient.EXPECT().SetHostName("host1")
@@ -169,7 +176,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			Expect(fakeExec.CommandCalls).To(Equal(1))
 		})
-		It("should configure the system fully when same subnet across DPUs", func() {
+		It("should preserve default networking when separate bridge allocation is not set", func() {
 			testCtrl := gomock.NewController(GinkgoT())
 			ovsClient := ovsclientMock.NewMockOVSClient(testCtrl)
 			networkhelper := networkhelperMock.NewMockNetworkHelper(testCtrl)
@@ -202,7 +209,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset()
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1440)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, nil, nil, nil, fakeNode.Name, nil, 1440)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -242,7 +249,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
 			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
+			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To(10000), nil)
 			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
@@ -297,6 +304,8 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
 			Expect(err).ToNot(HaveOccurred())
+			brOVNIPNet, err := netlink.ParseIPNet("192.168.1.3/24")
+			Expect(err).ToNot(HaveOccurred())
 			fakeNode := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
@@ -315,7 +324,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(hostNode).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, brOVNIPNet, gateway, hostCIDR, fakeNode.Name, nil, 1500)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -366,6 +375,8 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
 			Expect(err).ToNot(HaveOccurred())
+			brOVNIPNet, err := netlink.ParseIPNet("192.168.1.3/24")
+			Expect(err).ToNot(HaveOccurred())
 			fakeNode := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "dpu1",
@@ -384,7 +395,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(hostNode).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, brOVNIPNet, gateway, hostCIDR, fakeNode.Name, nil, 1500)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -450,7 +461,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(hostNode).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, pfIPNet, gateway, hostCIDR, fakeNode.Name, nil, 1500)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			tmpDir, err := os.MkdirTemp("", "dpucniprovisioner")
@@ -511,7 +522,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, pfIPNet, gateway, hostCIDR, fakeNode.Name, nil, 1500)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -561,6 +572,8 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			pfIPNet, err := netlink.ParseIPNet("192.168.1.2/24")
 			Expect(err).ToNot(HaveOccurred())
+			brOVNIPNet, err := netlink.ParseIPNet("192.168.1.3/24")
+			Expect(err).ToNot(HaveOccurred())
 			oobIPNet, err := netlink.ParseIPNet("10.0.100.100/24")
 			Expect(err).ToNot(HaveOccurred())
 			oobIPNetWith32Mask, err := netlink.ParseIPNet("10.0.100.100/32")
@@ -580,7 +593,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, brOVNIPNet, gateway, hostCIDR, fakeNode.Name, nil, 1500)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -600,13 +613,14 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			By("Checking the first run")
 			ovsClient.EXPECT().GetSystemID().Return("test-system-id", nil).AnyTimes()
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet)
-			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", vtepIPNet)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-vtep", vtepIPNet)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
+			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", brOVNIPNet)
+			networkhelper.EXPECT().SetLinkIPAddress("br-ovn", brOVNIPNet)
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
-			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-ovn", nil, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To[int](10000), nil)
+			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-vtep", nil)
+			networkhelper.EXPECT().AddRoute(vtepCIDR, gateway, "br-vtep", nil, nil)
 			mac, _ := net.ParseMAC("00:00:00:00:00:01")
 			networkhelper.EXPECT().GetHostPFMACAddressDPU("0").Return(mac, nil)
 
@@ -623,6 +637,8 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			networkhelper.EXPECT().GetGateway(defaultRouteNetwork).Return(defaultGateway, nil)
 			networkhelper.EXPECT().RouteExists(vtepCIDR, defaultGateway, "br-comm-ch", ptr.To(60)).Return(false, nil)
 			networkhelper.EXPECT().AddRoute(vtepCIDR, defaultGateway, "br-comm-ch", nil, ptr.To(60)).Return(nil)
+			networkhelper.EXPECT().RouteExists(hostCIDR, defaultGateway, "br-comm-ch", ptr.To(60)).Return(false, nil)
+			networkhelper.EXPECT().AddRoute(hostCIDR, defaultGateway, "br-comm-ch", nil, ptr.To(60)).Return(nil)
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
@@ -632,10 +648,11 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			By("Checking the second run")
-			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", vtepIPNet).Return(true, nil)
+			networkhelper.EXPECT().LinkIPAddressExists("br-vtep", vtepIPNet).Return(true, nil)
+			networkhelper.EXPECT().SetLinkUp("br-vtep")
+			networkhelper.EXPECT().LinkIPAddressExists("br-ovn", brOVNIPNet).Return(true, nil)
 			networkhelper.EXPECT().SetLinkUp("br-ovn")
-			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-ovn", nil).Return(true, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
+			networkhelper.EXPECT().RouteExists(vtepCIDR, gateway, "br-vtep", nil).Return(true, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			networkhelper.EXPECT().RuleExists(flannelIPNet, 60, 31000).Return(true, nil)
@@ -645,6 +662,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 
 			networkhelper.EXPECT().GetGateway(defaultRouteNetwork).Return(defaultGateway, nil)
 			networkhelper.EXPECT().RouteExists(vtepCIDR, defaultGateway, "br-comm-ch", ptr.To(60)).Return(true, nil)
+			networkhelper.EXPECT().RouteExists(hostCIDR, defaultGateway, "br-comm-ch", ptr.To(60)).Return(true, nil)
 
 			ovsClient.EXPECT().SetOVNEncapIP(net.ParseIP("192.168.1.1"))
 			ovsClient.EXPECT().SetKubernetesHostNodeName("host1")
@@ -677,7 +695,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, fakeNode.Name, nil, 1500)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.InternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, gateway, pfIPNet, gateway, hostCIDR, fakeNode.Name, nil, 1500)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -750,7 +768,7 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, nil, nil, nil, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -783,8 +801,6 @@ var _ = Describe("DPU CNI Provisioner in External mode", func() {
 			Expect(err).ToNot(HaveOccurred())
 			gateway := net.ParseIP("192.168.1.254")
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil)
-			networkhelper.EXPECT().AddRoute(hostCIDR, gateway, "br-ovn", ptr.To(10000), nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
@@ -856,7 +872,7 @@ network:
 			}
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, clock.NewFakeClock(time.Now()), ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, nil, nil, nil, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -897,7 +913,6 @@ network:
 			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
@@ -923,7 +938,6 @@ network:
 			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			Expect(err).ToNot(HaveOccurred())
@@ -974,7 +988,7 @@ network:
 			kubernetesClient := testclient.NewClientset(fakeNode)
 			fakeClock := clock.NewFakeClock(time.Now())
 			hostKubernetesClient := fake.NewClientBuilder().WithScheme(k8sscheme.Scheme).WithObjects(newHostKubernetesClient("host1")).Build()
-			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, fakeClock, ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
+			provisioner := dpucniprovisioner.New(context.Background(), dpucniprovisioner.ExternalIPAM, fakeClock, ovsClient, networkhelper, fakeExec, kubernetesClient, nil, nil, vtepCIDR, hostCIDR, nil, nil, nil, nil, nil, fakeNode.Name, gatewayDiscoveryNetwork, 0)
 			provisioner.SetHostKubernetesClient(hostKubernetesClient)
 
 			// Prepare Filesystem
@@ -1039,7 +1053,6 @@ network:
 			ovsClient.EXPECT().SetHostName("host1")
 			networkhelper.EXPECT().GetLinkIPAddresses("br-ovn").Return([]*net.IPNet{brOVNAddress}, nil)
 			networkhelper.EXPECT().GetGateway(fakeNetwork).Return(gateway, nil)
-			networkhelper.EXPECT().RouteExists(hostCIDR, gateway, "br-ovn", nil).Return(true, nil)
 
 			networkhelper.EXPECT().GetLinkIPAddresses("cni0").Return([]*net.IPNet{flannelIP}, nil)
 			_, flannelIPNet, err := net.ParseCIDR(flannelIP.String())
