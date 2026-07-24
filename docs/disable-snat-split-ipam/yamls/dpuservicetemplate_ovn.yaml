@@ -1,0 +1,35 @@
+---
+apiVersion: svc.dpu.nvidia.com/v1alpha1
+kind: DPUServiceTemplate
+metadata:
+  name: ovn
+  namespace: dpf-operator-system
+spec:
+  deploymentServiceName: "ovn"
+  helmChart:
+    source:
+      repoURL: $OVN_KUBERNETES_REPO_URL
+      chart: ovn-kubernetes-chart
+      version: $OVN_KUBERNETES_CHART_TAG
+    values:
+      commonManifests:
+        enabled: true
+      dpuManifests:
+        enabled: true
+        image:
+          pullPolicy: Always
+        imagedpf:
+          pullPolicy: Always
+      global:
+        enableMultiNetwork: true
+        enableNetworkSegmentation: true # UDN
+        # enableEgressIP: true
+        egressIpHealthCheckPort: "0" # Disable health check for egress IP
+        enableEgressService: true
+        enableEgressFirewall: true
+        enableEgressQoS: true
+        enableMultiNetworkPolicy: true
+        enableAdminNetworkPolicy: true
+        disableSnatGatewayRouters: true
+      leaseNamespace: "ovn-kubernetes"
+      gatewayOpts: "--gateway-interface=br-dpu"
