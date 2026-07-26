@@ -119,7 +119,7 @@ gatewayOpts: ""
 # -- MTU of network interface in a Kubernetes pod
 mtu: 1400
 # -- OVN daemonset version, used as the OVN_DAEMONSET_VERSION env var across components
-ovnDaemonsetVersion: "1.3.0"
+ovnDaemonsetVersion: "1.2.0"
 # -- NetworkPolicy namespaceSelector to match host-network traffic
 hostNetworkNamespace: "ovn-host-network"
 
