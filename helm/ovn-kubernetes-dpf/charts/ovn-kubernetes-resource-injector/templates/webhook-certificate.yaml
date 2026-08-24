@@ -1,15 +1,26 @@
-{{- $issuerName := include "ovn-kubernetes-resource-injector.fullname" . -}}
+{{- $issuerRef := (.Values.certManager | default dict).issuerRef | default dict -}}
+{{- $selfSignedIssuerName := include "ovn-kubernetes-resource-injector.fullname" . -}}
+{{- $issuerName := $selfSignedIssuerName }}
+{{- $issuerKind := "Issuer" }}
+{{- $issuerGroup := "cert-manager.io" }}
+{{- if $issuerRef.name }}
+{{- $issuerName = $issuerRef.name }}
+{{- $issuerKind = $issuerRef.kind | default $issuerKind }}
+{{- $issuerGroup = $issuerRef.group | default $issuerGroup }}
+{{- end }}
+{{- if not $issuerRef.name }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   labels:
     dpu.nvidia.com/component: ovn-kubernetes-resource-injector
     {{- include "ovn-kubernetes-resource-injector.labels" . | nindent 4 }}
-  name: {{ $issuerName }}
+  name: {{ $selfSignedIssuerName }}
   namespace: {{ .Release.Namespace }}
 spec:
   selfSigned: {}
 ---
+{{- end }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -23,6 +34,7 @@ spec:
   - {{ include "ovn-kubernetes-resource-injector.webhook.serviceName" . }}.{{ .Release.Namespace }}.svc
   - {{ include "ovn-kubernetes-resource-injector.webhook.serviceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
   issuerRef:
-    kind: Issuer
-    name: {{ $issuerName }}
+    kind: {{ $issuerKind | quote }}
+    name: {{ $issuerName | quote }}
+    group: {{ $issuerGroup | quote }}
   secretName: {{ include "ovn-kubernetes-resource-injector.webhook.secretName" . }}

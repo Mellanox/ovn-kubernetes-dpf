@@ -41,6 +41,15 @@ controllerManager:
   - key: node-role.kubernetes.io/control-plane
     operator: "Exists"
     effect: NoSchedule
+certManager:
+  # -- Reference to an existing cert-manager issuer that signs the webhook serving certificate. When
+  # `name` is empty the chart creates a self-signed issuer and uses that. Set this to chain the
+  # webhook certificate to a certificate authority you own. `kind` defaults to `Issuer` and `group`
+  # to `cert-manager.io`.
+  issuerRef: {}
+    # name: my-issuer
+    # kind: ClusterIssuer
+    # group: cert-manager.io
 resourceName: ""
 nadName: dpf-ovn-kubernetes
 # -- Per-runtimeClass NAD mappings. Each entry creates an additional NetworkAttachmentDefinition and maps a
