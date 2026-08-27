@@ -158,16 +158,22 @@ spec:
           [
             {
               "name": "vtep",
-              "poolName": "{{ .Values.dpuManifests.ipamPool }}",
-              "poolType": "{{ .Values.dpuManifests.ipamPoolType}}",
-              "allocateIPWithIndex": {{ .Values.dpuManifests.ipamVTEPIPIndex }}
+              "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.vtep.pool }}",
+              "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.vtep.poolType }}",
+              "allocateIPWithIndex": {{ default .Values.dpuManifests.ipamVTEPIPIndex .Values.dpuManifests.ipam.vtep.ipIndex }}
             },
             {
               "name": "pf",
-              "poolName": "{{ .Values.dpuManifests.ipamPool }}",
-              "poolType": "{{ .Values.dpuManifests.ipamPoolType}}",
-              "allocateIPWithIndex": {{ .Values.dpuManifests.ipamPFIPIndex }}
-            }
+              "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.hostInterface.pool }}",
+              "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.hostInterface.poolType }}",
+              "allocateIPWithIndex": {{- if ne .Values.dpuManifests.ipam.hostInterface.pfIPIndex nil }} {{ .Values.dpuManifests.ipam.hostInterface.pfIPIndex }}{{- else if ne .Values.dpuManifests.ipam.hostInterface.ipIndex nil }} {{ .Values.dpuManifests.ipam.hostInterface.ipIndex }}{{- else }} {{ .Values.dpuManifests.ipamPFIPIndex }}{{- end }}
+            }{{- if ne .Values.dpuManifests.ipam.hostInterface.brOVNIPIndex nil }},
+            {
+              "name": "br-ovn",
+              "poolName": "{{ default .Values.dpuManifests.ipamPool .Values.dpuManifests.ipam.hostInterface.pool }}",
+              "poolType": "{{ default .Values.dpuManifests.ipamPoolType .Values.dpuManifests.ipam.hostInterface.poolType }}",
+              "allocateIPWithIndex": {{ .Values.dpuManifests.ipam.hostInterface.brOVNIPIndex }}
+            }{{- end }}
           ]
         {{- end }}
       {{- end }}
@@ -281,7 +287,6 @@ spec:
             - /var/run/readyz
           initialDelaySeconds: 30
         {{- if not .Values.dpuManifests.externalDHCP }}
-        # Liveness probe to check DHCP server health (only for internal IPAM mode)
         livenessProbe:
           exec:
             command:
@@ -330,9 +335,11 @@ spec:
               key: mtu
         {{- end }}
         - name: VTEP_CIDR
-          value: {{ default "" .Values.dpuManifests.vtepCIDR | quote }}
+          value: {{ default .Values.dpuManifests.vtepCIDR .Values.dpuManifests.ipam.vtep.cidr | default "" | quote }}
         - name: HOST_CIDR
           value: {{ default "" .Values.dpuManifests.hostCIDR | quote }}
+        - name: HOST_INTERFACE_CIDR
+          value: {{ default "" .Values.dpuManifests.ipam.hostInterface.cidr | quote }}
         - name: OVNKUBE_NODE_DPU_LEASE_RENEW_INTERVAL
           value: {{ .Values.dpuHealthCheck.renewInterval | quote }}
         - name: OVNKUBE_NODE_DPU_LEASE_DURATION
@@ -734,7 +741,9 @@ spec:
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: ""
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
-          value: ""
+          value: {{ default "" .Values.global.disableSnatMultipleGws | quote }}
+        - name: OVN_DISABLE_SNAT_GATEWAY_ROUTERS
+          value: {{ default "" .Values.global.disableSnatGatewayRouters | quote }}
         - name: OVN_DISABLE_FORWARDING
           value: ""
         - name: OVN_ENCAP_PORT

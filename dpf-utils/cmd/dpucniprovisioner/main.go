@@ -53,6 +53,9 @@ const (
 	// pfIPAllocationFilePath is the path to the file that contains the PF IP allocation done by the IP Allocator.
 	// We should ensure that the IP Allocation request name is pf to have this file created correctly.
 	pfIPAllocationFilePath = "/tmp/ips/pf"
+	// brOVNIPAllocationFilePath is the path to the file that contains the br-ovn IP allocation done by the IP Allocator.
+	// We should ensure that the IP Allocation request name is br-ovn to have this file created correctly.
+	brOVNIPAllocationFilePath = "/tmp/ips/br-ovn"
 	// hostClusterTokenFilePath is where cniprovisioner expects the host-cluster token to be mounted.
 	hostClusterTokenFilePath = "/host-cluster-access/token"
 	// hostClusterCAFilePath is where cniprovisioner expects the host-cluster CA bundle to be mounted.
@@ -80,6 +83,10 @@ func main() {
 	var vtepIPNet *net.IPNet
 	var gateway net.IP
 	var pfIPNet *net.IPNet
+	var pfGateway net.IP
+	var brOVNIPNet *net.IPNet
+	var brOVNGateway net.IP
+	var hostInterfaceCIDR *net.IPNet
 	var vtepCIDR *net.IPNet
 	var ovnMTU int
 	var gatewayDiscoveryNetwork *net.IPNet
@@ -89,9 +96,18 @@ func main() {
 			klog.Fatalf("error while parsing info from the VTEP IP allocation file: %s", err.Error())
 		}
 
-		pfIPNet, err = getPFIP()
+		pfIPNet, pfGateway, err = getInfoFromPFIPAllocation()
 		if err != nil {
-			klog.Fatalf("error while the PF IP from the allocation file: %s", err.Error())
+			klog.Fatalf("error while parsing info from the PF IP allocation file: %s", err.Error())
+		}
+
+		if _, err := os.Stat(brOVNIPAllocationFilePath); err == nil {
+			brOVNIPNet, brOVNGateway, err = getInfoFromBROVNIPAllocation()
+			if err != nil {
+				klog.Fatalf("error while parsing info from the br-ovn IP allocation file: %s", err.Error())
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			klog.Fatalf("error while checking br-ovn IP allocation file: %s", err.Error())
 		}
 
 		ovnMTU, err = getOVNMTU()
@@ -108,6 +124,11 @@ func main() {
 	vtepCIDR, err = getVTEPCIDR()
 	if err != nil {
 		klog.Fatalf("error while parsing VTEP CIDR: %s", err.Error())
+	}
+
+	hostInterfaceCIDR, err = getOptionalHostInterfaceCIDR()
+	if err != nil {
+		klog.Fatalf("error while parsing Host Interface CIDR: %s", err.Error())
 	}
 
 	hostCIDR, err := getHostCIDR()
@@ -137,7 +158,27 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	provisioner := dpucniprovisioner.New(ctx, mode, c, ovsClient, networkhelper.New(), exec, clientset, vtepIPNet, gateway, vtepCIDR, hostCIDR, pfIPNet, node, gatewayDiscoveryNetwork, ovnMTU)
+	provisioner := dpucniprovisioner.New(
+		ctx,
+		mode,
+		c,
+		ovsClient,
+		networkhelper.New(),
+		exec,
+		clientset,
+		vtepIPNet,
+		gateway,
+		vtepCIDR,
+		hostCIDR,
+		pfIPNet,
+		pfGateway,
+		brOVNIPNet,
+		brOVNGateway,
+		hostInterfaceCIDR,
+		node,
+		gatewayDiscoveryNetwork,
+		ovnMTU,
+	)
 	provisioner.K8sAPIServer = os.Getenv("K8S_APISERVER")
 	if ok, renew, dur, err := parseDPUNodeLeaseFromEnv(); err != nil {
 		klog.Fatal(err)
@@ -188,9 +229,25 @@ func main() {
 // getInfoFromVTEPIPAllocation returns the VTEP IP and gateway from a file that contains the VTEP IP allocation done
 // by the IP Allocator component.
 func getInfoFromVTEPIPAllocation() (*net.IPNet, net.IP, error) {
-	content, err := os.ReadFile(vtepIPAllocationFilePath)
+	return getInfoFromIPAllocation(vtepIPAllocationFilePath, "VTEP")
+}
+
+// getInfoFromPFIPAllocation returns the PF IP and gateway from a file that contains the PF IP allocation done
+// by the IP Allocator component.
+func getInfoFromPFIPAllocation() (*net.IPNet, net.IP, error) {
+	return getInfoFromIPAllocation(pfIPAllocationFilePath, "PF")
+}
+
+// getInfoFromBROVNIPAllocation returns the br-ovn IP and gateway from a file that contains the br-ovn IP allocation
+// done by the IP Allocator component.
+func getInfoFromBROVNIPAllocation() (*net.IPNet, net.IP, error) {
+	return getInfoFromIPAllocation(brOVNIPAllocationFilePath, "br-ovn")
+}
+
+func getInfoFromIPAllocation(path, name string) (*net.IPNet, net.IP, error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while reading file %s: %w", vtepIPAllocationFilePath, err)
+		return nil, nil, fmt.Errorf("error while reading file %s: %w", path, err)
 	}
 
 	results := []ipallocator.NVIPAMIPAllocatorResult{}
@@ -199,48 +256,22 @@ func getInfoFromVTEPIPAllocation() (*net.IPNet, net.IP, error) {
 	}
 
 	if len(results) != 1 {
-		return nil, nil, fmt.Errorf("expecting exactly 1 IP allocation for VTEP")
+		return nil, nil, fmt.Errorf("expecting exactly 1 IP allocation for %s", name)
 	}
 
-	vtepIPRaw := results[0].IP
-	vtepIP, err := netlink.ParseIPNet(vtepIPRaw)
+	ipRaw := results[0].IP
+	ip, err := netlink.ParseIPNet(ipRaw)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while parsing VTEP IP to net.IPNet: %w", err)
+		return nil, nil, fmt.Errorf("error while parsing %s IP to net.IPNet: %w", name, err)
 	}
 
 	gatewayRaw := results[0].Gateway
 	gateway := net.ParseIP(gatewayRaw)
 	if gateway == nil {
-		return nil, nil, errors.New("error while parsing Gateway IP to net.IP: input is not valid")
+		return nil, nil, fmt.Errorf("error while parsing %s Gateway IP to net.IP: input is not valid", name)
 	}
 
-	return vtepIP, gateway, nil
-}
-
-// getPFIP() returns the PF IP from a file that contains the PF IP allocation done by the IP Allocator
-// component.
-func getPFIP() (*net.IPNet, error) {
-	content, err := os.ReadFile(pfIPAllocationFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("error while reading file %s: %w", vtepIPAllocationFilePath, err)
-	}
-
-	results := []ipallocator.NVIPAMIPAllocatorResult{}
-	if err := json.Unmarshal(content, &results); err != nil {
-		return nil, fmt.Errorf("error while unmarshalling IP Allocator results: %w", err)
-	}
-
-	if len(results) != 1 {
-		return nil, fmt.Errorf("expecting exactly 1 IP allocation for PF")
-	}
-
-	pfIPRaw := results[0].IP
-	pfIP, err := netlink.ParseIPNet(pfIPRaw)
-	if err != nil {
-		return nil, fmt.Errorf("error while parsing PF IP to net.IPNet: %w", err)
-	}
-
-	return pfIP, nil
+	return ip, gateway, nil
 }
 
 // getVTEPCIDR returns the VTEP CIDR to be used by the provisioner
@@ -298,6 +329,21 @@ func getHostCIDR() (*net.IPNet, error) {
 	}
 
 	return hostCIDR, nil
+}
+
+// getOptionalHostInterfaceCIDR returns the Host Interface CIDR when split IPAM is configured.
+func getOptionalHostInterfaceCIDR() (*net.IPNet, error) {
+	hostInterfaceCIDRRaw := os.Getenv("HOST_INTERFACE_CIDR")
+	if hostInterfaceCIDRRaw == "" {
+		return nil, nil
+	}
+
+	_, hostInterfaceCIDR, err := net.ParseCIDR(hostInterfaceCIDRRaw)
+	if err != nil {
+		klog.Fatalf("error while parsing Host Interface CIDR %s as net.IPNet: %s", hostInterfaceCIDRRaw, err.Error())
+	}
+
+	return hostInterfaceCIDR, nil
 }
 
 func newHostClusterClient(apiServer string) (client.Client, error) {
