@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -182,6 +183,15 @@ func TestNetworkInjector_Default(t *testing.T) {
 	podWithSingleTermMatchingNodesWithoutDPUIndirectly := basePod.DeepCopy()
 	setSelectorTerms(podWithSingleTermMatchingNodesWithoutDPUIndirectly, singleTermMatchingNodesWithoutDPUIndirectly)
 
+	podWithNodeNameDPU := basePod.DeepCopy()
+	podWithNodeNameDPU.Spec.NodeName = nodeWithDPUName
+
+	podWithNodeNameNonDPU := basePod.DeepCopy()
+	podWithNodeNameNonDPU.Spec.NodeName = nodeWithoutDPUName
+
+	podWithNodeNameNoLabels := basePod.DeepCopy()
+	podWithNodeNameNoLabels.Spec.NodeName = nodeWithNoLabelsName
+
 	podWithExistingVFResources := basePod.DeepCopy()
 	podWithExistingVFResources.Spec.Containers[0].Resources.Requests = corev1.ResourceList{
 		resourceName: resource.MustParse("1"),
@@ -206,6 +216,22 @@ func TestNetworkInjector_Default(t *testing.T) {
 			pod:                   basePod,
 			expectedResourceCount: "1",
 			expectAnnotation:      true,
+		},
+		{
+			name:                  "inject VF to pod with spec.nodeName targeting DPU node",
+			pod:                   podWithNodeNameDPU,
+			expectedResourceCount: "1",
+			expectAnnotation:      true,
+		},
+		{
+			name:                  "don't inject VF to pod with spec.nodeName targeting non-DPU node",
+			pod:                   podWithNodeNameNonDPU,
+			expectedResourceCount: "0",
+		},
+		{
+			name:                  "don't inject VF to pod with spec.nodeName targeting node with no labels",
+			pod:                   podWithNodeNameNoLabels,
+			expectedResourceCount: "0",
 		},
 		{
 			name:                  "don't inject VF to pod that has nodeSelector matching only hosts without DPU and no affinity",
@@ -459,6 +485,15 @@ func TestNetworkInjector_PrioritizeOffloadingDisabled(t *testing.T) {
 	podWithAffinityMatchingNodeByNameNoLabels := basePod.DeepCopy()
 	setSelectorTermsToNodeName(podWithAffinityMatchingNodeByNameNoLabels, nodeWithNoLabelsName)
 
+	podWithNodeNameDPU := basePod.DeepCopy()
+	podWithNodeNameDPU.Spec.NodeName = nodeWithDPUName
+
+	podWithNodeNameNonDPU := basePod.DeepCopy()
+	podWithNodeNameNonDPU.Spec.NodeName = nodeWithoutDPUName
+
+	podWithNodeNameNoLabels := basePod.DeepCopy()
+	podWithNodeNameNoLabels.Spec.NodeName = nodeWithNoLabelsName
+
 	podWithExistingVFResources := basePod.DeepCopy()
 	podWithExistingVFResources.Spec.Containers[0].Resources.Requests = corev1.ResourceList{
 		resourceName: resource.MustParse("1"),
@@ -489,6 +524,28 @@ func TestNetworkInjector_PrioritizeOffloadingDisabled(t *testing.T) {
 			expectAnnotation:           false,
 			expectAffinityPatch:        true,
 			expectedAffinityTermsCount: 1,
+		},
+		{
+			name:                       "inject VF and don't patch affinity for pod with spec.nodeName targeting DPU node (PrioritizeOffloading=false)",
+			pod:                        podWithNodeNameDPU,
+			expectedResourceCount:      "1",
+			expectAnnotation:           true,
+			expectAffinityPatch:        false,
+			expectedAffinityTermsCount: 0,
+		},
+		{
+			name:                       "don't inject VF and don't patch affinity for pod with spec.nodeName targeting non-DPU node (PrioritizeOffloading=false)",
+			pod:                        podWithNodeNameNonDPU,
+			expectedResourceCount:      "0",
+			expectAffinityPatch:        false,
+			expectedAffinityTermsCount: 0,
+		},
+		{
+			name:                       "don't inject VF and don't patch affinity for pod with spec.nodeName targeting node with no labels (PrioritizeOffloading=false)",
+			pod:                        podWithNodeNameNoLabels,
+			expectedResourceCount:      "0",
+			expectAffinityPatch:        false,
+			expectedAffinityTermsCount: 0,
 		},
 		{
 			name:                       "don't inject VF when nodeSelector matches only hosts without DPU (PrioritizeOffloading=false)",
@@ -942,6 +999,173 @@ func TestAddAffinityForNonDPUNodes(t *testing.T) {
 	}
 }
 
+func TestNetworkInjector_AntiAffinityDistribution(t *testing.T) {
+	resourceName := corev1.ResourceName("test-resource")
+
+	nodeNonDPU1 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "non-dpu-1", Labels: map[string]string{"environment": "production"}},
+	}
+	nodeNonDPU2 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "non-dpu-2", Labels: map[string]string{"environment": "production"}},
+	}
+	nodeNonDPU3 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "non-dpu-3", Labels: map[string]string{"environment": "production"}},
+	}
+	nodeDPU1 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "dpu-1", Labels: map[string]string{"k8s.ovn.org/dpu-host": "", "environment": "production"}},
+	}
+	nodeDPU2 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "dpu-2", Labels: map[string]string{"k8s.ovn.org/dpu-host": "", "environment": "production"}},
+	}
+
+	nad := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.cni.cncf.io/v1",
+			"kind":       "NetworkAttachmentDefinition",
+			"metadata": map[string]interface{}{
+				"name":      "dpf-ovn-kubernetes",
+				"namespace": "ovn-kubernetes",
+				"annotations": map[string]interface{}{
+					"k8s.v1.cni.cncf.io/resourceName": resourceName.String(),
+				},
+			},
+		},
+	}
+
+	rsUID := types.UID("test-rs-uid")
+
+	makePod := func(name string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "test-ns",
+				OwnerReferences: []metav1.OwnerReference{
+					{UID: rsUID, Name: "test-rs", Kind: "ReplicaSet", APIVersion: "apps/v1"},
+				},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:      "test",
+						Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{}, Limits: corev1.ResourceList{}},
+					},
+				},
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{TopologyKey: "kubernetes.io/hostname"},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("first pods get assigned to DPU, rest to non-DPU", func(t *testing.T) {
+		g := NewWithT(t)
+		s := scheme.Scheme
+
+		objects := []client.Object{nodeNonDPU1, nodeNonDPU2, nodeNonDPU3, nodeDPU1, nodeDPU2, nad}
+		fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
+
+		wh := &NetworkInjector{
+			Client: fakeclient,
+			Settings: NetworkInjectorSettings{
+				NADName:              "dpf-ovn-kubernetes",
+				NADNamespace:         "ovn-kubernetes",
+				DPUHostLabelKey:      "k8s.ovn.org/dpu-host",
+				DPUHostLabelValue:    "",
+				PrioritizeOffloading: false,
+			},
+		}
+
+		// Pod 1: no siblings yet → should be assigned to DPU (inject VFs)
+		pod1 := makePod("pod-1")
+		g.Expect(wh.Default(context.Background(), pod1)).To(Succeed())
+		g.Expect(pod1.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("1"))).To(BeTrue())
+		g.Expect(pod1.Annotations[annotationKeyToBeInjected]).To(Equal("ovn-kubernetes/dpf-ovn-kubernetes"))
+
+		// Simulate pod1 existing in the cluster for the next webhook call
+		pod1.Namespace = "test-ns"
+		g.Expect(fakeclient.Create(context.Background(), pod1)).To(Succeed())
+
+		// Pod 2: 1 DPU sibling → still room (2 DPU nodes) → assign to DPU
+		pod2 := makePod("pod-2")
+		g.Expect(wh.Default(context.Background(), pod2)).To(Succeed())
+		g.Expect(pod2.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("1"))).To(BeTrue())
+
+		pod2.Namespace = "test-ns"
+		g.Expect(fakeclient.Create(context.Background(), pod2)).To(Succeed())
+
+		// Pod 3: 2 DPU siblings → DPU full → assign to non-DPU (no VFs)
+		pod3 := makePod("pod-3")
+		g.Expect(wh.Default(context.Background(), pod3)).To(Succeed())
+		g.Expect(pod3.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("0"))).To(BeTrue())
+		g.Expect(pod3.Annotations[annotationKeyToBeInjected]).To(BeEmpty())
+
+		// Pod 4: still DPU full → assign to non-DPU
+		pod4 := makePod("pod-4")
+		g.Expect(wh.Default(context.Background(), pod4)).To(Succeed())
+		g.Expect(pod4.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("0"))).To(BeTrue())
+
+		// Pod 5: still DPU full → assign to non-DPU
+		pod5 := makePod("pod-5")
+		g.Expect(wh.Default(context.Background(), pod5)).To(Succeed())
+		g.Expect(pod5.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("0"))).To(BeTrue())
+	})
+
+	t.Run("pods without anti-affinity fall through to general logic", func(t *testing.T) {
+		g := NewWithT(t)
+		s := scheme.Scheme
+
+		objects := []client.Object{nodeNonDPU1, nodeNonDPU2, nodeNonDPU3, nodeDPU1, nodeDPU2, nad}
+		fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
+
+		wh := &NetworkInjector{
+			Client: fakeclient,
+			Settings: NetworkInjectorSettings{
+				NADName:              "dpf-ovn-kubernetes",
+				NADNamespace:         "ovn-kubernetes",
+				DPUHostLabelKey:      "k8s.ovn.org/dpu-host",
+				DPUHostLabelValue:    "",
+				PrioritizeOffloading: false,
+			},
+		}
+
+		pod := makePod("pod-no-antiaffinity")
+		pod.Spec.Affinity.PodAntiAffinity = nil
+
+		g.Expect(wh.Default(context.Background(), pod)).To(Succeed())
+		// Should fall through to shouldSkipInjection, which adds exclusion (PrioritizeOffloading=false, mixed nodes)
+		g.Expect(pod.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("0"))).To(BeTrue())
+	})
+
+	t.Run("pods without ownerReference fall through to general logic", func(t *testing.T) {
+		g := NewWithT(t)
+		s := scheme.Scheme
+
+		objects := []client.Object{nodeNonDPU1, nodeNonDPU2, nodeNonDPU3, nodeDPU1, nodeDPU2, nad}
+		fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
+
+		wh := &NetworkInjector{
+			Client: fakeclient,
+			Settings: NetworkInjectorSettings{
+				NADName:              "dpf-ovn-kubernetes",
+				NADNamespace:         "ovn-kubernetes",
+				DPUHostLabelKey:      "k8s.ovn.org/dpu-host",
+				DPUHostLabelValue:    "",
+				PrioritizeOffloading: false,
+			},
+		}
+
+		pod := makePod("pod-no-owner")
+		pod.OwnerReferences = nil
+
+		g.Expect(wh.Default(context.Background(), pod)).To(Succeed())
+		g.Expect(pod.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse("0"))).To(BeTrue())
+	})
+}
+
 func setSelectorTermsToNodeName(pod *corev1.Pod, nodeName string) {
 	setSelectorTerms(pod, []corev1.NodeSelectorTerm{
 		{
@@ -1140,6 +1364,187 @@ func TestNetworkInjector_ResolveNADName(t *testing.T) {
 				Spec: corev1.PodSpec{RuntimeClassName: tt.runtimeClass},
 			}
 			g.Expect(webhook.resolveNADName(pod)).To(Equal(tt.expectedNAD))
+		})
+	}
+}
+
+func TestNetworkInjector_PVNodeAffinity(t *testing.T) {
+	resourceName := corev1.ResourceName("test-resource")
+
+	nodeDPU := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "dpu-node", Labels: map[string]string{"k8s.ovn.org/dpu-host": "", "kubernetes.io/hostname": "dpu-node"}},
+	}
+	nodeNonDPU := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "non-dpu-node", Labels: map[string]string{"kubernetes.io/hostname": "non-dpu-node"}},
+	}
+
+	nad := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "k8s.cni.cncf.io/v1",
+			"kind":       "NetworkAttachmentDefinition",
+			"metadata": map[string]interface{}{
+				"name":      "dpf-ovn-kubernetes",
+				"namespace": "ovn-kubernetes",
+				"annotations": map[string]interface{}{
+					"k8s.v1.cni.cncf.io/resourceName": resourceName.String(),
+				},
+			},
+		},
+	}
+
+	pvDPU := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "pv-dpu"},
+		Spec: corev1.PersistentVolumeSpec{
+			NodeAffinity: &corev1.VolumeNodeAffinity{
+				Required: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{
+						{
+							MatchExpressions: []corev1.NodeSelectorRequirement{
+								{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpIn, Values: []string{"dpu-node"}},
+							},
+						},
+					},
+				},
+			},
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Capacity:    corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/tmp/data"},
+			},
+		},
+	}
+
+	pvNonDPU := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "pv-non-dpu"},
+		Spec: corev1.PersistentVolumeSpec{
+			NodeAffinity: &corev1.VolumeNodeAffinity{
+				Required: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{
+						{
+							MatchExpressions: []corev1.NodeSelectorRequirement{
+								{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpIn, Values: []string{"non-dpu-node"}},
+							},
+						},
+					},
+				},
+			},
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Capacity:    corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/tmp/data"},
+			},
+		},
+	}
+
+	pvNoAffinity := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "pv-no-affinity"},
+		Spec: corev1.PersistentVolumeSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Capacity:    corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/tmp/data"},
+			},
+		},
+	}
+
+	pvcDPU := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "pvc-dpu", Namespace: "test-ns"},
+		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv-dpu"},
+	}
+
+	pvcNonDPU := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "pvc-non-dpu", Namespace: "test-ns"},
+		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv-non-dpu"},
+	}
+
+	pvcUnbound := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "pvc-unbound", Namespace: "test-ns"},
+		Spec:       corev1.PersistentVolumeClaimSpec{},
+	}
+
+	pvcNoAffinity := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "pvc-no-affinity", Namespace: "test-ns"},
+		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv-no-affinity"},
+	}
+
+	makePod := func(name string, pvcNames ...string) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns"},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "test", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{}, Limits: corev1.ResourceList{}}},
+				},
+			},
+		}
+		for _, pvcName := range pvcNames {
+			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+				Name:         pvcName,
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}},
+			})
+		}
+		return pod
+	}
+
+	tests := []struct {
+		name                  string
+		pod                   *corev1.Pod
+		expectedResourceCount string
+		expectAnnotation      bool
+	}{
+		{
+			name:                  "inject VF for pod with PVC bound to PV pinned to DPU node",
+			pod:                   makePod("pod-pvc-dpu", "pvc-dpu"),
+			expectedResourceCount: "1",
+			expectAnnotation:      true,
+		},
+		{
+			name:                  "don't inject VF for pod with PVC bound to PV pinned to non-DPU node",
+			pod:                   makePod("pod-pvc-non-dpu", "pvc-non-dpu"),
+			expectedResourceCount: "0",
+			expectAnnotation:      false,
+		},
+		{
+			name:                  "fall through for pod with unbound PVC",
+			pod:                   makePod("pod-pvc-unbound", "pvc-unbound"),
+			expectedResourceCount: "1",
+			expectAnnotation:      true,
+		},
+		{
+			name:                  "fall through for pod with PVC bound to PV without node affinity",
+			pod:                   makePod("pod-pvc-no-affinity", "pvc-no-affinity"),
+			expectedResourceCount: "1",
+			expectAnnotation:      true,
+		},
+		{
+			name:                  "fall through for pod with no PVCs",
+			pod:                   makePod("pod-no-pvc"),
+			expectedResourceCount: "1",
+			expectAnnotation:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			s := scheme.Scheme
+			objects := []client.Object{nodeDPU, nodeNonDPU, nad, pvDPU, pvNonDPU, pvNoAffinity, pvcDPU, pvcNonDPU, pvcUnbound, pvcNoAffinity}
+			fakeclient := fake.NewClientBuilder().WithObjects(objects...).WithScheme(s).Build()
+
+			wh := &NetworkInjector{
+				Client: fakeclient,
+				Settings: NetworkInjectorSettings{
+					NADName:              "dpf-ovn-kubernetes",
+					NADNamespace:         "ovn-kubernetes",
+					DPUHostLabelKey:      "k8s.ovn.org/dpu-host",
+					DPUHostLabelValue:    "",
+					PrioritizeOffloading: true,
+				},
+			}
+
+			err := wh.Default(context.Background(), tt.pod)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(tt.pod.Spec.Containers[0].Resources.Requests[resourceName].Equal(resource.MustParse(tt.expectedResourceCount))).To(BeTrue())
+			g.Expect(tt.pod.Annotations[annotationKeyToBeInjected] == "ovn-kubernetes/dpf-ovn-kubernetes").To(Equal(tt.expectAnnotation))
 		})
 	}
 }

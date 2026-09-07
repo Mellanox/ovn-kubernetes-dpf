@@ -19,14 +19,17 @@ package webhooks
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -117,6 +120,47 @@ func (webhook *NetworkInjector) Default(ctx context.Context, obj runtime.Object)
 		return injectNetworkResources(ctx, pod, nadName, webhook.Settings.NADNamespace, vfResourceName)
 	}
 
+	// If pod targets a specific node via spec.nodeName, decide based on that node alone.
+	// The general mixed-node logic is wrong here — it would add an exclusion affinity
+	// that contradicts the explicit node assignment, causing the kubelet to reject the pod.
+	if pod.Spec.NodeName != "" {
+		isDPU, err := webhook.isNodeDPUHost(ctx, pod.Spec.NodeName)
+		if err != nil {
+			return err
+		}
+		if isDPU {
+			return injectNetworkResources(ctx, pod, nadName, webhook.Settings.NADNamespace, vfResourceName)
+		}
+		return nil
+	}
+
+	// If pod has per-node anti-affinity and a controller owner, distribute pods across
+	// DPU and non-DPU nodes based on how many siblings have already been assigned to each.
+	decided, shouldInject, err := webhook.tryDistributeWithAntiAffinity(ctx, pod, vfResourceName)
+	if err != nil {
+		return err
+	}
+	if decided {
+		if shouldInject {
+			return injectNetworkResources(ctx, pod, nadName, webhook.Settings.NADNamespace, vfResourceName)
+		}
+		return nil
+	}
+
+	// If pod has PVCs bound to PVs pinned to a specific node, decide based on that node.
+	// Without this, the webhook adds an exclusion affinity that contradicts the PV's node
+	// binding, making the pod unschedulable.
+	pvNodeDecided, pvNodeIsDPU, err := webhook.checkPVNodeAffinity(ctx, pod)
+	if err != nil {
+		return err
+	}
+	if pvNodeDecided {
+		if pvNodeIsDPU {
+			return injectNetworkResources(ctx, pod, nadName, webhook.Settings.NADNamespace, vfResourceName)
+		}
+		return nil
+	}
+
 	// Determine if injection should be skipped and if node affinity should be added for non-DPU workers
 	skipInjection, shouldAddAffinityForNonDPUNodes, err := webhook.shouldSkipInjection(ctx, pod)
 	if err != nil {
@@ -166,36 +210,318 @@ func getVFResourceName(ctx context.Context, c client.Reader, netAttachDefName st
 	return "", fmt.Errorf("resource can't be found in network attachment definition because annotation %s doesn't exist", netAttachDefResourceNameAnnotation)
 }
 
-// shouldSkipInjection determines if VF injection should be skipped based on the pod's scheduling requirements and matching nodes.
-func (webhook *NetworkInjector) shouldSkipInjection(ctx context.Context, pod *corev1.Pod) (skipInjection bool, shouldAddAffinityForNonDPUNodes bool, error error) {
-	// Get the required node affinity from the pod (combines nodeSelector and affinity)
+// nodeIsDPUHost checks whether a node has the DPU host label.
+func (webhook *NetworkInjector) nodeIsDPUHost(node *corev1.Node) bool {
+	if node.Labels == nil {
+		return false
+	}
+	value, exists := node.Labels[webhook.Settings.DPUHostLabelKey]
+	return exists && value == webhook.Settings.DPUHostLabelValue
+}
+
+// checkPVNodeAffinity checks if the pod has PVCs bound to PVs with node affinity.
+// If all PV-bound nodes are DPU hosts, returns (true, true). If all are non-DPU,
+// returns (true, false). If mixed, unbound, or no PVCs, returns (false, false, nil)
+// to let the caller fall through to general logic.
+func (webhook *NetworkInjector) checkPVNodeAffinity(ctx context.Context, pod *corev1.Pod) (decided bool, isDPU bool, err error) {
+	var pvNodes []corev1.Node
+	hasPVC := false
+
+	for _, vol := range pod.Spec.Volumes {
+		if vol.PersistentVolumeClaim == nil {
+			continue
+		}
+		hasPVC = true
+
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := webhook.Client.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: vol.PersistentVolumeClaim.ClaimName}, pvc); err != nil {
+			return false, false, nil
+		}
+		if pvc.Spec.VolumeName == "" {
+			return false, false, nil
+		}
+
+		pv := &corev1.PersistentVolume{}
+		if err := webhook.Client.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, pv); err != nil {
+			return false, false, nil
+		}
+
+		if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+			continue
+		}
+
+		nodes, err := webhook.nodesMatchingSelector(ctx, pv.Spec.NodeAffinity.Required)
+		if err != nil {
+			return false, false, err
+		}
+		pvNodes = append(pvNodes, nodes...)
+	}
+
+	if !hasPVC || len(pvNodes) == 0 {
+		return false, false, nil
+	}
+
+	dpuCount := 0
+	for i := range pvNodes {
+		if webhook.nodeIsDPUHost(&pvNodes[i]) {
+			dpuCount++
+		}
+	}
+
+	if dpuCount == len(pvNodes) {
+		return true, true, nil
+	}
+	if dpuCount == 0 {
+		return true, false, nil
+	}
+	return false, false, nil
+}
+
+// nodesMatchingSelector returns nodes that match a NodeSelector.
+func (webhook *NetworkInjector) nodesMatchingSelector(ctx context.Context, selector *corev1.NodeSelector) ([]corev1.Node, error) {
+	nodeList := &corev1.NodeList{}
+	if err := webhook.Client.List(ctx, nodeList); err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	var matching []corev1.Node
+	for _, node := range nodeList.Items {
+		if nodeMatchesSelector(&node, selector) {
+			matching = append(matching, node)
+		}
+	}
+	return matching, nil
+}
+
+// nodeMatchesSelector checks if a node matches any term in a NodeSelector.
+func nodeMatchesSelector(node *corev1.Node, selector *corev1.NodeSelector) bool {
+	for _, term := range selector.NodeSelectorTerms {
+		if nodeMatchesTerm(node, &term) {
+			return true
+		}
+	}
+	return false
+}
+
+// nodeMatchesTerm checks if a node matches a single NodeSelectorTerm.
+func nodeMatchesTerm(node *corev1.Node, term *corev1.NodeSelectorTerm) bool {
+	for _, req := range term.MatchExpressions {
+		if !nodeSatisfiesRequirement(node.Labels, req) {
+			return false
+		}
+	}
+	return true
+}
+
+// nodeSatisfiesRequirement checks if a node's labels satisfy a single NodeSelectorRequirement.
+func nodeSatisfiesRequirement(nodeLabels map[string]string, req corev1.NodeSelectorRequirement) bool {
+	value, exists := nodeLabels[req.Key]
+	switch req.Operator {
+	case corev1.NodeSelectorOpIn:
+		if !exists {
+			return false
+		}
+		for _, v := range req.Values {
+			if v == value {
+				return true
+			}
+		}
+		return false
+	case corev1.NodeSelectorOpNotIn:
+		if !exists {
+			return true
+		}
+		for _, v := range req.Values {
+			if v == value {
+				return false
+			}
+		}
+		return true
+	case corev1.NodeSelectorOpExists:
+		return exists
+	case corev1.NodeSelectorOpDoesNotExist:
+		return !exists
+	default:
+		return false
+	}
+}
+
+// isNodeDPUHost fetches a node by name and checks whether it is a DPU host.
+func (webhook *NetworkInjector) isNodeDPUHost(ctx context.Context, nodeName string) (bool, error) {
+	node := &corev1.Node{}
+	if err := webhook.Client.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+	return webhook.nodeIsDPUHost(node), nil
+}
+
+// ownerMutexes serializes webhook decisions for pods from the same controller,
+// preventing race conditions when a ReplicaSet creates multiple pods concurrently.
+var ownerMutexes sync.Map
+
+func getOwnerMutex(uid types.UID) *sync.Mutex {
+	val, _ := ownerMutexes.LoadOrStore(uid, &sync.Mutex{})
+	return val.(*sync.Mutex)
+}
+
+// tryDistributeWithAntiAffinity handles pods with per-node anti-affinity from a
+// controller (ReplicaSet, etc.) targeting a mix of DPU and non-DPU nodes. Instead
+// of applying the same policy to every pod, it distributes pods across the two
+// partitions: the first N pods (where N = DPU node count) get routed to DPU nodes
+// with VF injection, the rest get routed to non-DPU nodes.
+//
+// Returns (decided, shouldInject, error). If decided is false, the caller should
+// fall through to the general shouldSkipInjection logic.
+func (webhook *NetworkInjector) tryDistributeWithAntiAffinity(ctx context.Context, pod *corev1.Pod, vfResourceName corev1.ResourceName) (decided bool, shouldInject bool, err error) {
+	if !hasPodPerNodeAntiAffinity(pod) || len(pod.OwnerReferences) == 0 {
+		return false, false, nil
+	}
+
+	log := ctrl.LoggerFrom(ctx)
+
+	matchingNodes, err := webhook.getMatchingNodes(ctx, pod)
+	if err != nil {
+		return false, false, err
+	}
+
+	dpuNodeCount := 0
+	for i := range matchingNodes {
+		if webhook.nodeIsDPUHost(&matchingNodes[i]) {
+			dpuNodeCount++
+		}
+	}
+	nonDPUNodeCount := len(matchingNodes) - dpuNodeCount
+
+	if dpuNodeCount == 0 || nonDPUNodeCount == 0 {
+		return false, false, nil
+	}
+
+	owner := pod.OwnerReferences[0]
+	mu := getOwnerMutex(owner.UID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	siblingPods := &corev1.PodList{}
+	if err := webhook.Client.List(ctx, siblingPods, client.InNamespace(pod.Namespace)); err != nil {
+		return false, false, fmt.Errorf("failed to list pods in namespace: %w", err)
+	}
+
+	dpuAssigned := 0
+	for i := range siblingPods.Items {
+		sibling := &siblingPods.Items[i]
+		if !hasOwnerWithUID(sibling.OwnerReferences, owner.UID) {
+			continue
+		}
+		if podHasVFResources(sibling, vfResourceName) {
+			dpuAssigned++
+		}
+	}
+
+	if dpuAssigned < dpuNodeCount {
+		log.Info("distributing pod to DPU node", "dpuAssigned", dpuAssigned, "dpuNodeCount", dpuNodeCount)
+		addAffinityForDPUNodes(ctx, pod, webhook.Settings.DPUHostLabelKey, webhook.Settings.DPUHostLabelValue)
+		return true, true, nil
+	}
+
+	log.Info("distributing pod to non-DPU node", "dpuAssigned", dpuAssigned, "dpuNodeCount", dpuNodeCount)
+	addAffinityForNonDPUNodes(ctx, pod, webhook.Settings.DPUHostLabelKey, webhook.Settings.DPUHostLabelValue)
+	return true, false, nil
+}
+
+// hasPodPerNodeAntiAffinity checks if the pod has required pod anti-affinity with
+// topologyKey kubernetes.io/hostname, meaning at most one pod per node.
+func hasPodPerNodeAntiAffinity(pod *corev1.Pod) bool {
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.PodAntiAffinity == nil {
+		return false
+	}
+	for _, term := range pod.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+		if term.TopologyKey == "kubernetes.io/hostname" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasOwnerWithUID checks if the given owner references include one with the specified UID.
+func hasOwnerWithUID(refs []metav1.OwnerReference, uid types.UID) bool {
+	for _, ref := range refs {
+		if ref.UID == uid {
+			return true
+		}
+	}
+	return false
+}
+
+// getMatchingNodes returns nodes that match the pod's scheduling requirements.
+func (webhook *NetworkInjector) getMatchingNodes(ctx context.Context, pod *corev1.Pod) ([]corev1.Node, error) {
 	requiredNodeAffinity := nodeaffinity.GetRequiredNodeAffinity(pod)
 
-	// Use the pod's nodeSelector to filter nodes at the API level for better performance
-	// This works because scheduler will need to satisfy both nodeSelector and nodeAffinity, so stripping down the original
-	// list of nodes to only the ones that match the nodeSelector is a valid optimization.
 	listOpts := []client.ListOption{}
 	if len(pod.Spec.NodeSelector) > 0 {
 		labelSelector := labels.SelectorFromSet(pod.Spec.NodeSelector)
 		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: labelSelector})
 	}
 
-	// List nodes (filtered by nodeSelector if present)
 	nodeList := &corev1.NodeList{}
 	if err := webhook.Client.List(ctx, nodeList, listOpts...); err != nil {
-		return false, false, fmt.Errorf("failed to list nodes: %w", err)
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	// Filter nodes that match the pod's scheduling requirements
 	var matchingNodes []corev1.Node
 	for _, node := range nodeList.Items {
 		matches, err := requiredNodeAffinity.Match(&node)
 		if err != nil {
-			return false, false, fmt.Errorf("failed to match node affinity: %w", err)
+			return nil, fmt.Errorf("failed to match node affinity: %w", err)
 		}
 		if matches {
 			matchingNodes = append(matchingNodes, node)
 		}
+	}
+	return matchingNodes, nil
+}
+
+// addAffinityForDPUNodes patches the pod's node affinity to require nodes with the DPU label.
+func addAffinityForDPUNodes(ctx context.Context, pod *corev1.Pod, dpuHostLabelKey string, dpuHostLabelValue string) {
+	log := ctrl.LoggerFrom(ctx)
+
+	if pod.Spec.Affinity == nil {
+		pod.Spec.Affinity = &corev1.Affinity{}
+	}
+	if pod.Spec.Affinity.NodeAffinity == nil {
+		pod.Spec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	if pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{}
+	}
+
+	requireDPUExpr := corev1.NodeSelectorRequirement{
+		Key:      dpuHostLabelKey,
+		Operator: corev1.NodeSelectorOpIn,
+		Values:   []string{dpuHostLabelValue},
+	}
+
+	terms := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) == 0 {
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = []corev1.NodeSelectorTerm{
+			{MatchExpressions: []corev1.NodeSelectorRequirement{requireDPUExpr}},
+		}
+	} else {
+		for i := range terms {
+			terms[i].MatchExpressions = append(terms[i].MatchExpressions, requireDPUExpr)
+		}
+	}
+
+	log.Info("patched pod with node affinity to require DPU nodes")
+}
+
+// shouldSkipInjection determines if VF injection should be skipped based on the pod's scheduling requirements and matching nodes.
+func (webhook *NetworkInjector) shouldSkipInjection(ctx context.Context, pod *corev1.Pod) (skipInjection bool, shouldAddAffinityForNonDPUNodes bool, error error) {
+	matchingNodes, err := webhook.getMatchingNodes(ctx, pod)
+	if err != nil {
+		return false, false, err
 	}
 
 	// If no nodes match, return false (inject by default - pod might not be schedulable or node might join later)
@@ -212,14 +538,8 @@ func (webhook *NetworkInjector) shouldSkipInjection(ctx context.Context, pod *co
 	// Count nodes with and without the DPU label
 	nodesWithDPU := 0
 	nodesWithoutDPU := 0
-	for _, node := range matchingNodes {
-		hasDPULabel := false
-		if node.Labels != nil {
-			if value, exists := node.Labels[webhook.Settings.DPUHostLabelKey]; exists && value == webhook.Settings.DPUHostLabelValue {
-				hasDPULabel = true
-			}
-		}
-		if hasDPULabel {
+	for i := range matchingNodes {
+		if webhook.nodeIsDPUHost(&matchingNodes[i]) {
 			nodesWithDPU++
 		} else {
 			nodesWithoutDPU++

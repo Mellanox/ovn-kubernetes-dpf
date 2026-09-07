@@ -18,6 +18,9 @@ rules:
   - ""
   resources:
   - nodes
+  - pods
+  - persistentvolumeclaims
+  - persistentvolumes
   verbs:
   - get
   - list
