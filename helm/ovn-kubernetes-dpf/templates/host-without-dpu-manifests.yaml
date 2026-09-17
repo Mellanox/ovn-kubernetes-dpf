@@ -430,7 +430,7 @@ spec:
         - name: OVN_GATEWAY_MODE
           value: shared
         - name: OVN_GATEWAY_OPTS
-          value: ""
+          value: {{ default "" .Values.gatewayOpts | quote }}
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: ""
         - name: OVN_NO_OVERLAY_ENABLE
