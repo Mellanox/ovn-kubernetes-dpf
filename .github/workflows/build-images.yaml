@@ -64,14 +64,13 @@ jobs:
       - name: Build and push Ubuntu image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile.ovn-kubernetes.ubuntu
+          context: ./ovn-kubernetes
+          file: ./ovn-kubernetes/dist/images/Dockerfile.ubuntu
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.IMAGE_NAME_UBUNTU }}:${{ steps.tag.outputs.tag }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            OVN_KUBERNETES_DIR=ovn-kubernetes
             BUILDER_IMAGE=quay.io/projectquay/golang:1.24
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -123,14 +122,13 @@ jobs:
       - name: Build and push Fedora image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile.ovn-kubernetes.fedora
+          context: ./ovn-kubernetes
+          file: ./ovn-kubernetes/dist/images/Dockerfile.fedora
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.IMAGE_NAME_FEDORA }}:${{ steps.tag.outputs.tag }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            OVN_KUBERNETES_DIR=ovn-kubernetes
             BUILDER_IMAGE=quay.io/projectquay/golang:1.24
           cache-from: type=gha
           cache-to: type=gha,mode=max

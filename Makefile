@@ -56,11 +56,10 @@ docker-buildx-setup: ## Ensure a buildx builder exists and is selected
 .PHONY: docker-build-ubuntu
 docker-build-ubuntu:
 	docker buildx build \
-		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		-t $(OVNKUBERNETES_IMAGE):$(TAG) \
 		--load \
-		-f Dockerfile.ovn-kubernetes.ubuntu .
+		-f $(OVN_KUBERNETES_DIR)/dist/images/Dockerfile.ubuntu $(OVN_KUBERNETES_DIR)
 
 .PHONY: docker-build-ubuntu-multiarch
 docker-build-ubuntu-multiarch: docker-buildx-setup ## Build and push multi-arch Ubuntu image (amd64+arm64)
@@ -72,20 +71,18 @@ docker-build-ubuntu-multiarch: docker-buildx-setup ## Build and push multi-arch 
 		--label org.opencontainers.image.revision=$(FULL_COMMIT) \
 		--label org.opencontainers.image.source=$(PROJECT_REPO) \
 		--label org.opencontainers.image.version=$(TAG) \
-		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		-t $(OVNKUBERNETES_IMAGE):$(TAG) \
 		--push \
-		-f Dockerfile.ovn-kubernetes.ubuntu .
+		-f $(OVN_KUBERNETES_DIR)/dist/images/Dockerfile.ubuntu $(OVN_KUBERNETES_DIR)
 
 .PHONY: docker-build-fedora
 docker-build-fedora:
 	docker buildx build \
-		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		-t $(OVNKUBERNETES_IMAGE):$(TAG)-fedora \
 		--load \
-		-f Dockerfile.ovn-kubernetes.fedora .
+		-f $(OVN_KUBERNETES_DIR)/dist/images/Dockerfile.fedora $(OVN_KUBERNETES_DIR)
 
 .PHONY: docker-build-fedora-multiarch
 docker-build-fedora-multiarch: docker-buildx-setup ## Build and push multi-arch Fedora image (amd64+arm64)
@@ -97,11 +94,10 @@ docker-build-fedora-multiarch: docker-buildx-setup ## Build and push multi-arch 
 		--label org.opencontainers.image.revision=$(FULL_COMMIT) \
 		--label org.opencontainers.image.source=$(PROJECT_REPO) \
 		--label org.opencontainers.image.version=$(TAG) \
-		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		-t $(OVNKUBERNETES_IMAGE):$(TAG)-fedora \
 		--push \
-		-f Dockerfile.ovn-kubernetes.fedora .
+		-f $(OVN_KUBERNETES_DIR)/dist/images/Dockerfile.fedora $(OVN_KUBERNETES_DIR)
 
 .PHONY: docker-build-dpf-utils
 docker-build-dpf-utils: ## Build DPF utilities image
