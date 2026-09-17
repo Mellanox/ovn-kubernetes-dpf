@@ -710,9 +710,7 @@ spec:
             fieldRef:
               fieldPath: status.hostIP
         - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ default .Release.Namespace .Values.leaseNamespace | quote }}
         - name: OVN_GATEWAY_MODE
           value: shared
         - name: OVN_GATEWAY_OPTS
