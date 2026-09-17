@@ -55,6 +55,8 @@ nodeWithoutDPUManifests:
     repository: ${OVNKUBERNETES_IMAGE}
     tag: ${TAG}
     pullPolicy: IfNotPresent
+  # -- Options related to setting up the gateway on full/regular worker nodes.
+  gatewayOpts: ""
   cniBinDir: "/opt/cni/bin"
   cniConfDir: "/etc/cni/net.d"
 
@@ -100,7 +102,7 @@ k8sAPIServer: https://172.25.0.2:6443
 podNetwork: 10.244.0.0/16/24
 # -- A comma-separated set of CIDR notation IP ranges from which k8s assigns service cluster IPs. This should be the same as the value provided for kube-apiserver "--service-cluster-ip-range" option
 serviceNetwork: 10.96.0.0/12
-# -- Options related to setting up the gateway. Applies to all relevant manifests.
+# -- Options related to setting up the gateway on DPU worker nodes.
 gatewayOpts: ""
 # -- MTU of network interface in a Kubernetes pod
 mtu: 1400
