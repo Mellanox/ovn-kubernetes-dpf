@@ -305,7 +305,8 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "host1",
 					Annotations: map[string]string{
-						"k8s.ovn.org/node-chassis-id": "stale-system-id",
+						"k8s.ovn.org/node-chassis-id":       "stale-system-id",
+						"k8s.ovn.org/primary-dpu-host-addr": `{"ipv4":"10.0.100.50/24"}`,
 					},
 				},
 			}
@@ -345,6 +346,7 @@ var _ = Describe("DPU CNI Provisioner in Internal mode", func() {
 			updatedHostNode, err := hostKubernetesClient.CoreV1().Nodes().Get(ctx, "host1", metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(updatedHostNode.Annotations).ToNot(HaveKey("k8s.ovn.org/node-chassis-id"))
+			Expect(updatedHostNode.Annotations).ToNot(HaveKey("k8s.ovn.org/primary-dpu-host-addr"))
 		})
 
 		It("should keep the host node chassis annotation when it already matches the local OVS system-id", func(ctx context.Context) {
