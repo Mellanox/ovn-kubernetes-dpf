@@ -95,6 +95,8 @@ const (
 	hostNodeNameFilePath = "/var/run/ovn-kubernetes/host-node-name"
 	// hostNodeChassisIDAnnotationKey is the host-cluster node annotation used by OVN to track the chassis identity.
 	hostNodeChassisIDAnnotationKey = "k8s.ovn.org/node-chassis-id"
+	// hostNodePrimaryDPUHostAddrAnnotationKey is the host-cluster node annotation used by OVN to track the DPU host address.
+	hostNodePrimaryDPUHostAddrAnnotationKey = "k8s.ovn.org/primary-dpu-host-addr"
 )
 
 type DPUCNIProvisioner struct {
@@ -148,13 +150,13 @@ type DPUCNIProvisioner struct {
 
 	// writeDPUNodeLeaseToOVNKConf, when true, adds [ovnkubenode] dpu-node-lease-* keys to ovn_k8s.conf.
 	writeDPUNodeLeaseToOVNKConf bool
-	dpuNodeLeaseRenewInterval  int
-	dpuNodeLeaseDuration       int
+	dpuNodeLeaseRenewInterval   int
+	dpuNodeLeaseDuration        int
 
 	// writeOVNKConfigNamespaceToOVNKConf, when true, adds [kubernetes] ovn-config-namespace to ovn_k8s.conf (upstream
 	// Kubernetes.OVNConfigNamespace; DPU leases and other config objects use this namespace).
 	writeOVNKConfigNamespaceToOVNKConf bool
-	ovnConfigNamespace               string
+	ovnConfigNamespace                 string
 }
 
 // New creates a DPUCNIProvisioner that can configure the system
@@ -227,10 +229,15 @@ func (p *DPUCNIProvisioner) SetOVNConfigNamespaceForOVNConf(namespace string) {
 
 // RunOnce runs the provisioning flow once and exits
 func (p *DPUCNIProvisioner) RunOnce() error {
-	if err := p.configure(); err != nil {
+	hostName, err := p.configure()
+	if err != nil {
 		return err
 	}
 	klog.Info("Configuration complete.")
+
+	if err := p.reconcileHostNodePrimaryDPUHostAddr(hostName); err != nil {
+		return fmt.Errorf("error while reconciling host node primary DPU host address annotation: %w", err)
+	}
 	if p.mode == InternalIPAM {
 		if err := p.startDHCPServer(); err != nil {
 			return fmt.Errorf("error while starting DHCP server: %w", err)
@@ -257,7 +264,7 @@ func (p *DPUCNIProvisioner) EnsureConfiguration() {
 		case <-p.ctx.Done():
 			return
 		case <-p.ensureConfigurationTicker.C():
-			if err := p.configure(); err != nil {
+			if _, err := p.configure(); err != nil {
 				klog.Errorf("failed to ensure configuration: %s", err.Error())
 			}
 		}
@@ -265,42 +272,42 @@ func (p *DPUCNIProvisioner) EnsureConfiguration() {
 }
 
 // configure runs the provisioning flow once
-func (p *DPUCNIProvisioner) configure() error {
+func (p *DPUCNIProvisioner) configure() (string, error) {
 	klog.Info("Configuring Kubernetes host name in OVS")
 	hostName, err := p.findAndSetKubernetesHostNameInOVS()
 	if err != nil {
-		return fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
+		return "", fmt.Errorf("error while setting the Kubernetes Host Name in OVS: %w", err)
 	}
 	if err := p.writeHostIdentityBootstrapArtifacts(hostName); err != nil {
-		return fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
+		return "", fmt.Errorf("error while writing host identity bootstrap artifacts: %w", err)
 	}
 	if err := p.reconcileHostNodeChassisID(hostName); err != nil {
-		return fmt.Errorf("error while reconciling host node chassis annotation: %w", err)
+		return "", fmt.Errorf("error while reconciling host node chassis annotation: %w", err)
 	}
 
 	if p.mode == ExternalIPAM {
 		klog.Info("Configuring br-ovn")
 		if err := p.configureBROVN(); err != nil {
-			return fmt.Errorf("error while configuring br-ovn: %w", err)
+			return "", fmt.Errorf("error while configuring br-ovn: %w", err)
 		}
 	}
 
 	klog.Info("Configuring system to enable pod to pod on different node connectivity")
 	if err := p.configurePodToPodOnDifferentNodeConnectivity(); err != nil {
-		return err
+		return "", err
 	}
 
 	klog.Info("Writing OVN Kubernetes expected input files")
 	if err := p.writeFilesForOVN(); err != nil {
-		return err
+		return "", err
 	}
 
 	klog.Info("Configuring symmetric routing")
 	if err := p.configureSymmetricRouting(); err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return hostName, nil
 }
 
 // reconcileHostNodeChassisID removes a stale host-cluster node chassis annotation when it differs from the local OVS
@@ -335,14 +342,41 @@ func (p *DPUCNIProvisioner) reconcileHostNodeChassisID(hostName string) error {
 	}
 
 	klog.Infof("Removing stale %s=%s from host cluster node %s to allow reprovisioned DPU system-id %s to register", hostNodeChassisIDAnnotationKey, current, hostName, systemID)
-	base := node.DeepCopy()
-	delete(node.Annotations, hostNodeChassisIDAnnotationKey)
-	if err := p.hostKubernetesClient.Patch(p.ctx, node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-		return fmt.Errorf("error while removing stale %s annotation from host node %s: %w", hostNodeChassisIDAnnotationKey, hostName, err)
-	}
-	klog.Infof("Removed stale %s=%s from host cluster node %s", hostNodeChassisIDAnnotationKey, current, hostName)
+	return p.removeHostNodeAnnotation(node, hostNodeChassisIDAnnotationKey)
+}
 
+// removeHostNodeAnnotation deletes a single annotation from the host-cluster node.
+func (p *DPUCNIProvisioner) removeHostNodeAnnotation(node *corev1.Node, key string) error {
+	base := node.DeepCopy()
+	delete(node.Annotations, key)
+	if err := p.hostKubernetesClient.Patch(p.ctx, node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+		return fmt.Errorf("error while removing %s annotation from host node %s: %w", key, node.Name, err)
+	}
+
+	klog.Infof("Removed %s from host cluster node %s", key, node.Name)
 	return nil
+}
+
+// reconcileHostNodePrimaryDPUHostAddr removes the primary DPU host address annotation from the host node so that
+// ovnkube-node re-publishes the current address. Called once from RunOnce at startup.
+func (p *DPUCNIProvisioner) reconcileHostNodePrimaryDPUHostAddr(hostName string) error {
+	if p.hostKubernetesClient == nil {
+		klog.Info("Skipping host-cluster primary DPU host address reconciliation (no host-cluster client)")
+		return nil
+	}
+
+	node := &corev1.Node{}
+	if err := p.hostKubernetesClient.Get(p.ctx, k8stypes.NamespacedName{Name: hostName}, node); err != nil {
+		return fmt.Errorf("error while getting host cluster node %s: %w", hostName, err)
+	}
+
+	if _, ok := node.Annotations[hostNodePrimaryDPUHostAddrAnnotationKey]; !ok {
+		klog.Infof("Host cluster node %s has no %s annotation; no cleanup needed", hostName, hostNodePrimaryDPUHostAddrAnnotationKey)
+		return nil
+	}
+
+	klog.Infof("Removing %s annotation from host cluster node %s to let ovnkube-node re-publish it", hostNodePrimaryDPUHostAddrAnnotationKey, hostName)
+	return p.removeHostNodeAnnotation(node, hostNodePrimaryDPUHostAddrAnnotationKey)
 }
 
 // findAndSetKubernetesHostNameInOVS discovers and sets the Kubernetes Host Name in OVS
