@@ -95,6 +95,8 @@ const (
 	hostNodeChassisIDAnnotationKey = "k8s.ovn.org/node-chassis-id"
 	// hostNodeEncapIPsAnnotationKey is the host-cluster node annotation used by OVN to track encapsulation IPs.
 	hostNodeEncapIPsAnnotationKey = "k8s.ovn.org/node-encap-ips"
+	// hostNodePrimaryDPUHostAddrAnnotationKey is the host-cluster node annotation used by OVN to track the DPU host address.
+	hostNodePrimaryDPUHostAddrAnnotationKey = "k8s.ovn.org/primary-dpu-host-addr"
 )
 
 type DPUCNIProvisioner struct {
@@ -204,6 +206,9 @@ func (p *DPUCNIProvisioner) RunOnce() error {
 	if err := p.reconcileHostNodeEncapIPs(); err != nil {
 		return fmt.Errorf("error while reconciling host node encap IPs annotation: %w", err)
 	}
+	if err := p.reconcileHostNodePrimaryDPUHostAddr(); err != nil {
+		return fmt.Errorf("error while reconciling host node primary DPU host address annotation: %w", err)
+	}
 	if p.mode == InternalIPAM {
 		if err := p.startDHCPServer(); err != nil {
 			return fmt.Errorf("error while starting DHCP server: %w", err)
@@ -307,12 +312,18 @@ func (p *DPUCNIProvisioner) reconcileHostNodeChassisID(hostName string) error {
 	}
 
 	klog.Infof("Removing stale %s=%s from host cluster node %s to allow reprovisioned DPU system-id %s to register", hostNodeChassisIDAnnotationKey, current, hostName, systemID)
-	patchBytes := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null}}}`, hostNodeChassisIDAnnotationKey))
-	if _, err := p.hostKubernetesClient.CoreV1().Nodes().Patch(p.ctx, hostName, k8stypes.MergePatchType, patchBytes, metav1.PatchOptions{}, "status"); err != nil {
-		return fmt.Errorf("error while removing stale %s annotation from host node %s: %w", hostNodeChassisIDAnnotationKey, hostName, err)
-	}
-	klog.Infof("Removed stale %s=%s from host cluster node %s", hostNodeChassisIDAnnotationKey, current, hostName)
+	return p.removeHostNodeAnnotation(hostName, hostNodeChassisIDAnnotationKey)
+}
 
+// removeHostNodeAnnotation deletes a single annotation from the host-cluster node. The patch goes via the
+// nodes/status subresource because the DPU service account can only patch nodes/status.
+func (p *DPUCNIProvisioner) removeHostNodeAnnotation(hostName string, key string) error {
+	patchBytes := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null}}}`, key))
+	if _, err := p.hostKubernetesClient.CoreV1().Nodes().Patch(p.ctx, hostName, k8stypes.MergePatchType, patchBytes, metav1.PatchOptions{}, "status"); err != nil {
+		return fmt.Errorf("error while removing %s annotation from host node %s: %w", key, hostName, err)
+	}
+
+	klog.Infof("Removed %s from host cluster node %s", key, hostName)
 	return nil
 }
 
@@ -335,13 +346,24 @@ func (p *DPUCNIProvisioner) reconcileHostNodeEncapIPs() error {
 	}
 
 	klog.Infof("Removing %s annotation from host cluster node %s to let ovnkube-node re-register", hostNodeEncapIPsAnnotationKey, p.hostNodeName)
-	patchBytes := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null}}}`, hostNodeEncapIPsAnnotationKey))
-	if _, err := p.hostKubernetesClient.CoreV1().Nodes().Patch(p.ctx, p.hostNodeName, k8stypes.MergePatchType, patchBytes, metav1.PatchOptions{}, "status"); err != nil {
-		return fmt.Errorf("error while removing %s annotation from host node %s: %w", hostNodeEncapIPsAnnotationKey, p.hostNodeName, err)
+	return p.removeHostNodeAnnotation(p.hostNodeName, hostNodeEncapIPsAnnotationKey)
+}
+
+// reconcileHostNodePrimaryDPUHostAddr removes the primary DPU host address annotation from the host node so that
+// ovnkube-node re-publishes the current address. Called once from RunOnce at startup.
+func (p *DPUCNIProvisioner) reconcileHostNodePrimaryDPUHostAddr() error {
+	node, err := p.hostKubernetesClient.CoreV1().Nodes().Get(p.ctx, p.hostNodeName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("error while getting host cluster node %s: %w", p.hostNodeName, err)
 	}
 
-	klog.Infof("Removed %s from host cluster node %s", hostNodeEncapIPsAnnotationKey, p.hostNodeName)
-	return nil
+	if _, ok := node.Annotations[hostNodePrimaryDPUHostAddrAnnotationKey]; !ok {
+		klog.Infof("Host cluster node %s has no %s annotation; no cleanup needed", p.hostNodeName, hostNodePrimaryDPUHostAddrAnnotationKey)
+		return nil
+	}
+
+	klog.Infof("Removing %s annotation from host cluster node %s to let ovnkube-node re-publish it", hostNodePrimaryDPUHostAddrAnnotationKey, p.hostNodeName)
+	return p.removeHostNodeAnnotation(p.hostNodeName, hostNodePrimaryDPUHostAddrAnnotationKey)
 }
 
 // findAndSetKubernetesHostNameInOVS discovers and sets the Kubernetes Host Name in OVS
