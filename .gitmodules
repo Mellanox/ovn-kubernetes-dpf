@@ -1,4 +1,4 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
 	url = git@github.com:Mellanox/ovn-kubernetes.git
-	branch = release-1.4
+	branch = feat/f5-snat-ippool
